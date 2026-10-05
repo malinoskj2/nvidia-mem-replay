@@ -55,7 +55,7 @@ pub(super) fn dispatch() -> Result<bool> {
 
 fn run(config: &Config) -> Result<()> {
     config.validate()?;
-    let redirect = nvidia::plan(config.target()).context("snapshot original NVIDIA location")?;
+    let redirect = super::read_redirect(&mut io::stdin().lock(), config)?;
     let mut filesystem = Helper::start_memefs(config).context("start bundled MemFS Extended")?;
     let (stop, receiver) = mpsc::sync_channel(1);
     let reader = thread::spawn(move || {
@@ -86,13 +86,15 @@ fn run(config: &Config) -> Result<()> {
     if reader.is_finished() {
         let _ = reader.join();
     }
+    // Forward completed writes even when reporting or restoration failed.
+    let final_report = super::report_final(
+        &mut stdout,
+        stopped.as_ref().ok().and_then(Option::as_ref),
+        reporting,
+    );
     restored?;
-    reporting?;
-    if let Some(sample) = stopped? {
-        serde_json::to_writer(&mut stdout, &sample)?;
-        stdout.write_all(b"\n")?;
-        stdout.flush()?;
-    }
+    stopped?;
+    final_report?;
     Ok(())
 }
 

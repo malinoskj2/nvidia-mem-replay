@@ -224,8 +224,8 @@ fn start(store: &Store, config: &Config, status: &mut Status) -> Result<Session>
     status.original_path = Some(redirect.original_path.clone());
     status.target = Some(redirect.target.clone());
     store.save_config(config)?;
-    // The helper snapshots the original registry value before publishing readiness.
-    let helper = Helper::start(config).context("mount RAM filesystem")?;
+    // Readiness acknowledges the same recovery snapshot used by the GUI and journal.
+    let helper = Helper::start(config, &redirect).context("mount RAM filesystem")?;
     store
         .save_redirect(&redirect)
         .context("save redirect recovery journal")?;

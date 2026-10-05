@@ -38,7 +38,8 @@ created, closing exits and the GUI explains the fallback.
 [WinFsp-MemFs-Extended](https://github.com/Ceiridge/WinFsp-MemFs-Extended) supplies
 RAM storage on top of the [WinFsp](https://github.com/winfsp/winfsp) Windows driver.
 The GUI owns a Rust supervisor subprocess, which owns the native helper. Both
-helpers run without a console window. See [vendor/UPSTREAM.md](vendor/UPSTREAM.md)
+helpers run without a console window. The supervisor has a longer shutdown
+deadline than the native helper; forced termination is reported as an error. See [vendor/UPSTREAM.md](vendor/UPSTREAM.md)
 for the pinned source and local adapter changes.
 
 - File data is allocated on demand in 64 KiB sectors. The byte ceiling is passed
@@ -71,8 +72,9 @@ unsupported values produce a visible error. Original type and bytes are
 preserved; existing disk directories are not moved or removed.
 
 A journal is saved before redirection. Stop/quit restores before unmounting.
-The Rust supervisor snapshots the original value before readiness and restores
-it on GUI control-pipe EOF, including GUI crashes. Its own exit closes the native
+The GUI sends its exact recovery snapshot to the Rust supervisor before
+readiness. The supervisor restores it on GUI control-pipe EOF, including GUI
+crashes. Its own exit closes the native
 helper's pipe, so MemFS unmounts. A subsequent launch recovers a pending journal
 following a supervisor crash. Restoration replaces only this app's exact value,
 preserving later user or NVIDIA edits.

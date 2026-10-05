@@ -29,6 +29,17 @@ function Read-Sample {
     return ($task.Result | ConvertFrom-Json)
 }
 try {
+    # Share the authoritative recovery snapshot before waiting for readiness.
+    $originalBytes = if ($kind -eq 'Binary') { [byte[]]$original } else { [Text.Encoding]::Unicode.GetBytes($original + [char]0) }
+    $replacementBytes = [Text.Encoding]::Unicode.GetBytes($target + [char]0)
+    $snapshot = @{
+        original = @{ kind = [uint32]$kind; bytes = @($originalBytes | ForEach-Object { [int]$_ }) }
+        replacement = @{ kind = [uint32]$kind; bytes = @($replacementBytes | ForEach-Object { [int]$_ }) }
+        original_path = [Text.Encoding]::Unicode.GetString($originalBytes).TrimEnd([char]0)
+        target = $target
+    }
+    $process.StandardInput.WriteLine(($snapshot | ConvertTo-Json -Depth 4 -Compress))
+    $process.StandardInput.Flush()
     $baseline = Read-Sample
     if ($baseline.version -ne 1) { throw 'Wrong telemetry version.' }
     New-Item -ItemType Directory -Path $target | Out-Null
@@ -62,7 +73,7 @@ try {
     if (!$capacityFailed) { throw 'Filesystem did not enforce its memory ceiling.' }
     # EOF models owner exit/crash, without sending the orderly stop command.
     $process.StandardInput.Close()
-    if (!$process.WaitForExit(5000)) { throw 'Helper did not stop after owner exit.' }
+    if (!$process.WaitForExit(10000)) { throw 'Helper did not stop after owner exit.' }
     if ($process.ExitCode -ne 0) { throw "Helper exited with code $($process.ExitCode)." }
     $restored = $key.GetValue('TempFilePath', $null, 'DoNotExpandEnvironmentNames')
     if ($kind -eq 'Binary') {

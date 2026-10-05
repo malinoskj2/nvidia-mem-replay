@@ -1,4 +1,4 @@
-use crate::{config::Config, telemetry::Sample};
+use crate::{config::Config, sys::nvidia::Redirect, telemetry::Sample};
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
     process::{Child, ChildStdin, Command, Stdio},
@@ -22,6 +22,12 @@ pub(crate) enum HelperError {
         "RAM filesystem stopped unexpectedly; run the bundled installer to install or repair WinFsp 2.1, and restart Windows if requested"
     )]
     Exited,
+    #[error("RAM filesystem helper exceeded its shutdown deadline and was forcibly terminated")]
+    ForcedTermination,
+    #[error("recovery snapshot JSON: {0}")]
+    Snapshot(#[from] serde_json::Error),
+    #[error("recovery snapshot exceeds 64 KB")]
+    SnapshotOversized,
     #[error("helper telemetry: {0}")]
     Telemetry(String),
 }
@@ -37,10 +43,11 @@ pub(crate) struct Helper {
     input: Option<ChildStdin>,
     reader: Option<JoinHandle<()>>,
     inbox: Arc<Mutex<Inbox>>,
+    shutdown_timeout: Duration,
 }
 
 impl Helper {
-    pub(crate) fn start(config: &Config) -> Result<Self, HelperError> {
+    pub(crate) fn start(config: &Config, redirect: &Redirect) -> Result<Self, HelperError> {
         if std::path::Path::new(&format!("{}\\", config.mount())).try_exists()? {
             return Err(HelperError::Occupied(config.mount()));
         }
@@ -61,7 +68,7 @@ impl Helper {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
-        Self::wait_ready(command, config)
+        Self::wait_ready(command, config, Some(redirect))
     }
 
     #[cfg(windows)]
@@ -80,11 +87,29 @@ impl Helper {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .creation_flags(0x0800_0000);
-        Self::wait_ready(command, config)
+        Self::wait_ready(command, config, None)
     }
 
-    fn wait_ready(mut command: Command, config: &Config) -> Result<Self, HelperError> {
+    fn wait_ready(
+        mut command: Command,
+        config: &Config,
+        redirect: Option<&Redirect>,
+    ) -> Result<Self, HelperError> {
+        let snapshot = redirect.map(serde_json::to_vec).transpose()?;
+        if snapshot.as_ref().is_some_and(|bytes| bytes.len() >= 65_536) {
+            return Err(HelperError::SnapshotOversized);
+        }
         let mut helper = Self::from_child(command.spawn()?)?;
+        if let Some(snapshot) = snapshot {
+            // The first telemetry frame acknowledges receipt of this exact snapshot.
+            helper.shutdown_timeout = Duration::from_secs(10);
+            let input = helper
+                .input
+                .as_mut()
+                .ok_or_else(|| io::Error::other("missing helper stdin"))?;
+            input.write_all(&snapshot)?;
+            input.write_all(b"\n")?;
+        }
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if let Some(sample) = helper.sample()? {
@@ -138,6 +163,7 @@ impl Helper {
             child,
             reader: Some(reader),
             inbox,
+            shutdown_timeout: Duration::from_secs(5),
         })
     }
 
@@ -164,10 +190,12 @@ impl Helper {
         if let Some(mut input) = self.input.take() {
             let _ = input.write_all(b"stop\n");
         }
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + self.shutdown_timeout;
+        let mut forced = false;
         while self.child.try_wait()?.is_none() {
             if Instant::now() >= deadline {
                 self.child.kill()?;
+                forced = true;
                 break;
             }
             thread::sleep(Duration::from_millis(50));
@@ -177,6 +205,9 @@ impl Helper {
             reader
                 .join()
                 .map_err(|_| HelperError::Telemetry("reader thread failed".to_owned()))?;
+        }
+        if forced {
+            return Err(HelperError::ForcedTermination);
         }
         let inbox = self
             .inbox
@@ -210,6 +241,21 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(helper.stop().unwrap().unwrap().written_bytes, 17);
+        assert!(helper.reader.is_none());
+        assert!(helper.child.try_wait().unwrap().is_some());
+    }
+
+    #[test]
+    fn forced_shutdown_is_reported() {
+        let child = Command::new("sh")
+            .args(["-c", "read command; exec sleep 30"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut helper = Helper::from_child(child).unwrap();
+        helper.shutdown_timeout = Duration::from_millis(100);
+        assert!(matches!(helper.stop(), Err(HelperError::ForcedTermination)));
         assert!(helper.reader.is_none());
         assert!(helper.child.try_wait().unwrap().is_some());
     }
