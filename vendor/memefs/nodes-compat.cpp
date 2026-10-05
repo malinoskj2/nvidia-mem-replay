@@ -1,0 +1,145 @@
+#include "globalincludes.h"
+
+#include "exceptions.h"
+#include "nodes.h"
+#include "utils.h"
+#include "memfs-interface.h"
+
+namespace Memfs {
+	NTSTATUS CompatFspFileNodeSetEa(FSP_FILE_SYSTEM* fileSystem, PVOID fileNode, PFILE_FULL_EA_INFORMATION ea) {
+		FileNode* node = static_cast<FileNode*>(fileNode);
+
+		try {
+			node->SetEa(ea);
+		} catch (CreateException& ex) {
+			return ex.Which();
+		}
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS CompatSetFileSizeInternal(FSP_FILE_SYSTEM* fileSystem, PVOID fileNode0, UINT64 newSize, BOOLEAN setAllocationSize) {
+		MemFs* memfs = Interface::GetMemFs(fileSystem);
+		FileNode* fileNode = Interface::GetFileNode(fileNode0);
+
+		// Bound before alignment so oversized external lengths cannot wrap.
+		if (newSize > memfs->CalculateMaxTotalSize()) {
+			return STATUS_DISK_FULL;
+		}
+
+		if (setAllocationSize) {
+			if (fileNode->fileInfo.AllocationSize != newSize) {
+				// memefs: Sector Reallocate
+				const SIZE_T oldSize = fileNode->GetSectorNode().ApproximateSize();
+				const UINT64 plannedSize = SectorManager::GetSectorAmount(SectorManager::AlignSize(newSize)) * (sizeof(Sector) + sizeof(Sector*));
+				if (plannedSize > oldSize &&
+					(plannedSize - oldSize) > memfs->CalculateAvailableTotalSize()) {
+					return STATUS_DISK_FULL;
+				}
+
+
+				if (!memfs->GetSectorManager().ReAllocate(fileNode->GetSectorNode(), newSize)) {
+					return STATUS_INSUFFICIENT_RESOURCES;
+				}
+
+				fileNode->fileInfo.AllocationSize = newSize;
+				if (fileNode->fileInfo.FileSize > newSize) {
+					fileNode->fileInfo.FileSize = newSize;
+				}
+			}
+		} else {
+			if (fileNode->fileInfo.FileSize != newSize) {
+				if (fileNode->fileInfo.AllocationSize < newSize) {
+					const UINT64 allocationUnit = MEMFS_SECTOR_SIZE * MEMFS_SECTORS_PER_ALLOCATION_UNIT;
+					const UINT64 allocationSize = (newSize + allocationUnit - 1) / allocationUnit * allocationUnit;
+
+					const NTSTATUS result = CompatSetFileSizeInternal(fileSystem, fileNode, allocationSize, true);
+					if (!NT_SUCCESS(result)) {
+						return result;
+					}
+				}
+
+				// memefs: No null-initialization?
+				// if (fileNode->fileInfo.FileSize < NewSize)
+				//    memset((PUINT8)FileNode->FileData + fileNode->fileInfo.FileSize, 0,
+				//        (size_t)(NewSize - fileNode->fileInfo.FileSize));
+				fileNode->fileInfo.FileSize = newSize;
+			}
+		}
+
+		return STATUS_SUCCESS;
+	}
+
+	NTSTATUS CompatGetReparsePointByName(FSP_FILE_SYSTEM* fileSystem, PVOID context, PWSTR fileName, BOOLEAN isDirectory, PVOID buffer, PSIZE_T pSize) {
+		MemFs* memfs = Interface::GetMemFs(fileSystem);
+
+		/* GetReparsePointByName will never receive a named stream */
+		assert(nullptr == wcschr(fileName, L':'));
+
+		const auto fileNodeOpt = memfs->FindFile(fileName);
+		if (!fileNodeOpt.has_value())
+			return STATUS_OBJECT_NAME_NOT_FOUND;
+		FileNode& fileNode = fileNodeOpt.value();
+
+		std::shared_lock lock(fileNode.nodeMutex);
+
+		if (0 == (fileNode.fileInfo.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+			return STATUS_NOT_A_REPARSE_POINT;
+
+		if (buffer != nullptr) {
+			if (fileNode.reparseData.WantedByteSize() > *pSize)
+				return STATUS_BUFFER_TOO_SMALL;
+
+			*pSize = fileNode.reparseData.WantedByteSize();
+			memcpy_s(buffer, *pSize, fileNode.reparseData.Struct(), fileNode.reparseData.WantedByteSize());
+		}
+
+		return STATUS_SUCCESS;
+	}
+
+	BOOLEAN CompatAddDirInfo(FileNode* fileNode, PCWSTR fileName, PVOID buffer, ULONG length, PULONG pBytesTransferred) {
+		std::wstring fileNameStr;
+		if (fileName == nullptr) {
+			const Utils::SuffixView suffixView = Utils::PathSuffix(fileNode->fileName);
+			fileNameStr = suffixView.Suffix;
+		} else {
+			fileNameStr = fileName;
+		}
+
+		// C7: size the buffer from the name that is actually copied. Sizing it from
+		// fileNode->fileName was too small whenever fileName is longer than the node's own
+		// suffix (L".." with the root as parent) and only fit because DynamicStruct rounds up.
+		DynamicStruct<FSP_FSCTL_DIR_INFO> dirInfoBuf(
+			sizeof(FSP_FSCTL_DIR_INFO) + fileNameStr.length() * sizeof(std::wstring::value_type));
+		FSP_FSCTL_DIR_INFO* dirInfo = dirInfoBuf.Struct();
+
+		{
+			std::shared_lock lock(fileNode->nodeMutex);
+			memset(dirInfo->Padding, 0, sizeof dirInfo->Padding);
+			dirInfo->Size = (UINT16)(sizeof(FSP_FSCTL_DIR_INFO) + fileNameStr.length() * sizeof(WCHAR));
+			dirInfo->FileInfo = fileNode->fileInfo;
+		}
+
+		memcpy(dirInfo->FileNameBuf, fileNameStr.c_str(), dirInfo->Size - sizeof(FSP_FSCTL_DIR_INFO));
+
+		return FspFileSystemAddDirInfo(dirInfo, buffer, length, pBytesTransferred);
+	}
+
+	BOOLEAN CompatAddStreamInfo(FileNode* fileNode, PVOID buffer, ULONG length, PULONG pBytesTransferred) {
+		DynamicStruct<FSP_FSCTL_STREAM_INFO> streamInfoBuf(sizeof(FSP_FSCTL_STREAM_INFO) + fileNode->fileName.size() * sizeof(std::wstring::value_type) + 1);
+		FSP_FSCTL_STREAM_INFO* streamInfo = streamInfoBuf.Struct();
+
+		const auto streamNamePos = fileNode->fileName.find_first_of(L':');
+		std::wstring streamName;
+		if (streamNamePos != std::string::npos) {
+			streamName = fileNode->fileName.substr(streamNamePos + 1);
+		}
+
+		streamInfo->Size = (UINT16)(sizeof(FSP_FSCTL_STREAM_INFO) + streamName.length() * sizeof(WCHAR));
+		streamInfo->StreamSize = fileNode->fileInfo.FileSize;
+		streamInfo->StreamAllocationSize = fileNode->fileInfo.AllocationSize;
+		memcpy(streamInfo->StreamNameBuf, streamName.c_str(), streamInfo->Size - sizeof(FSP_FSCTL_STREAM_INFO));
+
+		return FspFileSystemAddStreamInfo(streamInfo, buffer, length, pBytesTransferred);
+	}
+}
