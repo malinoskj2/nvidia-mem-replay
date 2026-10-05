@@ -22,6 +22,8 @@ pub(crate) enum TrayError {
 pub(crate) struct Tray {
     _icon: TrayIcon,
     quitting: Arc<AtomicBool>,
+    stop_item: MenuItem,
+    quit_item: MenuItem,
 }
 
 impl Tray {
@@ -79,11 +81,18 @@ impl Tray {
         Ok(Self {
             _icon: icon,
             quitting,
+            stop_item,
+            quit_item: quit,
         })
     }
 
     pub(crate) fn quitting(&self) -> bool {
         self.quitting.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn disable_recording_controls(&self) {
+        self.stop_item.set_enabled(false);
+        self.quit_item.set_enabled(false);
     }
 
     pub(crate) fn quit(&self, ctx: &Context) {

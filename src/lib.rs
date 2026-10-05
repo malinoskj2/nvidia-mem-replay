@@ -9,7 +9,7 @@ mod storage;
 mod sys;
 mod telemetry;
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 use anyhow::Context;
 use anyhow::Result;
 
@@ -21,7 +21,9 @@ pub fn run() -> Result<()> {
     }
     let startup = (|| -> Result<_> {
         let store = storage::Store::open().context("open application state")?;
-        let config = store.load_config().context("load configuration")?;
+        let config = startup_config(&store, |redirect| {
+            sys::nvidia::restore(redirect).map_err(Into::into)
+        })?;
         let worker = service::Worker::spawn(store, config.clone());
         Ok((worker, config))
     })();
@@ -48,3 +50,17 @@ pub fn run() -> Result<()> {
 pub fn run() -> Result<()> {
     anyhow::bail!("Replay in RAM requires Windows x64, NVIDIA overlay, and WinFsp")
 }
+
+// Recovery is independent of parsing configuration or lifetime state.
+#[cfg(any(windows, test))]
+fn startup_config(
+    store: &storage::Store,
+    restore: impl FnOnce(&sys::nvidia::Redirect) -> Result<()>,
+) -> Result<config::Config> {
+    service::recover_with(store, restore)?;
+    store.load_config().context("load configuration")
+}
+
+#[cfg(test)]
+#[path = "../tests/unit/startup.rs"]
+mod startup_tests;

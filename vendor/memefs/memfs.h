@@ -61,8 +61,9 @@ namespace Memfs {
 		bool HasChild(const FileNode& node);
 
 		std::pair<NTSTATUS, FileNode*> InsertNode(FileNode* node);
-		std::pair<NTSTATUS, FileNode&> InsertNode(FileNode&& node);
+		std::pair<NTSTATUS, FileNode*> InsertNode(FileNode&& node);
 		void RemoveNode(FileNode& node, const bool reportDeletedSize = true);
+		NTSTATUS RenameNode(FileNode& node, const std::wstring_view& newFileName, bool replaceIfExists);
 
 		std::vector<FileNode*> EnumerateNamedStreams(const FileNode& node, const bool references);
 		std::vector<FileNode*> EnumerateDescendants(const FileNode& node, const bool references);

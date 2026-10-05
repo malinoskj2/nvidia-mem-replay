@@ -42,25 +42,24 @@ namespace Memfs::Interface {
 			return STATUS_DISK_FULL;
 		}
 
-		std::wstring fileName;
-		if (memfs->IsCaseInsensitive()) {
-			const Utils::SuffixView pathView = Utils::PathSuffix(fileName0);
-			assert(0 == Utils::FileNameCompare(pathView.RemainPrefix.data(), pathView.RemainPrefix.length(), parentNode.fileName.c_str(), parentNode.fileName.length(), true));
+		try {
+			std::wstring fileName;
+			if (memfs->IsCaseInsensitive()) {
+				const Utils::SuffixView pathView = Utils::PathSuffix(fileName0);
+				assert(0 == Utils::FileNameCompare(pathView.RemainPrefix.data(), pathView.RemainPrefix.length(), parentNode.fileName.c_str(), parentNode.fileName.length(), true));
 
-			const size_t remainLength = parentNode.fileName.length();
-			const size_t bSlashLength = 1 < remainLength;
-			const size_t suffixLength = pathView.Suffix.length();
-			if (MEMFS_MAX_PATH <= remainLength + bSlashLength + suffixLength) {
-				return STATUS_OBJECT_NAME_INVALID;
+				const size_t remainLength = parentNode.fileName.length();
+				const size_t bSlashLength = 1 < remainLength;
+				const size_t suffixLength = pathView.Suffix.length();
+				if (MEMFS_MAX_PATH <= remainLength + bSlashLength + suffixLength) {
+					return STATUS_OBJECT_NAME_INVALID;
+				}
+
+				fileName = parentNode.fileName + (bSlashLength ? L"\\" : L"") + std::wstring(pathView.Suffix);
+			} else {
+				fileName = fileName0;
 			}
 
-			fileName = parentNode.fileName + (bSlashLength ? L"\\" : L"") + std::wstring(pathView.Suffix);
-		} else {
-			fileName = fileName0;
-		}
-
-
-		try {
 			FileNode fileNode(fileName);
 
 			const auto mainNode = memfs->FindMainFromStream(fileName);
@@ -123,21 +122,25 @@ namespace Memfs::Interface {
 				return result;
 			}
 
-			newFileNode.Reference();
-			*pFileNode = &newFileNode;
-			newFileNode.CopyFileInfo(fileInfo);
+			newFileNode->Reference();
+			*pFileNode = newFileNode;
+			newFileNode->CopyFileInfo(fileInfo);
 
 			if (memfs->IsCaseInsensitive()) {
 				FSP_FSCTL_OPEN_FILE_INFO* openFileInfo = FspFileSystemGetOpenFileInfo(fileInfo);
 
 				wcscpy_s(openFileInfo->NormalizedName, openFileInfo->NormalizedNameSize / sizeof(WCHAR),
-				         newFileNode.fileName.c_str());
-				openFileInfo->NormalizedNameSize = (UINT16)(newFileNode.fileName.length() * sizeof(WCHAR));
+				         newFileNode->fileName.c_str());
+				openFileInfo->NormalizedNameSize = (UINT16)(newFileNode->fileName.length() * sizeof(WCHAR));
 			}
 
 			return STATUS_SUCCESS;
 		} catch (FileNameTooLongException& ex) {
 			return STATUS_OBJECT_NAME_INVALID;
+		} catch (const std::bad_alloc&) {
+			return STATUS_INSUFFICIENT_RESOURCES;
+		} catch (CreateException& ex) {
+			return ex.Which();
 		}
 	}
 

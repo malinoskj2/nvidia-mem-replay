@@ -1,6 +1,11 @@
 name: Check
 on: [push, pull_request]
 jobs:
+  native-regressions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tests/native/run.py
   rust:
     strategy:
       matrix:

@@ -1,6 +1,7 @@
 #include "globalincludes.h"
 #include "utils.h"
 #include "memfs.h"
+#include <unordered_set>
 
 using namespace Memfs;
 
@@ -129,30 +130,27 @@ std::pair<NTSTATUS, FileNode*> MemFs::InsertNode(FileNode* node) {
 			return {STATUS_OBJECT_NAME_COLLISION, resultNode};
 		}
 
-		this->TouchParent(*resultNode);
+		// Publication succeeded. An advisory timestamp failure must not make the caller
+		// destroy a node that the map now owns.
+		try { this->TouchParent(*resultNode); } catch (...) {}
 		return {STATUS_SUCCESS, resultNode};
 	} catch (...) {
 		return {STATUS_INSUFFICIENT_RESOURCES, node};
 	}
 }
 
-std::pair<NTSTATUS, FileNode&> MemFs::InsertNode(FileNode&& node) {
-	FileNode* allocatedNode{new FileNode(std::move(node))};
-	const auto [status, ptr] = this->InsertNode(allocatedNode);
-
-	if (!NT_SUCCESS(status)) {
-		// The node never entered the map, so nothing else can reach it.
-		delete allocatedNode;
-
-		if (STATUS_OBJECT_NAME_COLLISION != status) {
-			// emplace threw std::bad_alloc — unrecoverable for an in-memory filesystem
-			FspDebugLog(__FUNCTION__ ": cannot insert into FileNodeMap; aborting\n");
-			abort();
+std::pair<NTSTATUS, FileNode*> MemFs::InsertNode(FileNode&& node) {
+	try {
+		auto allocatedNode = std::make_unique<FileNode>(std::move(node));
+		const auto [status, ptr] = this->InsertNode(allocatedNode.get());
+		if (!NT_SUCCESS(status)) {
+			return {status, nullptr};
 		}
-		// On a collision ptr is the *existing* node, which is still alive.
+		allocatedNode.release(); // The successful insertion owns the map reference.
+		return {status, ptr};
+	} catch (const std::bad_alloc&) {
+		return {STATUS_INSUFFICIENT_RESOURCES, nullptr};
 	}
-
-	return {status, *ptr};
 }
 
 void MemFs::RemoveNode(FileNode& node, const bool reportDeletedSize) {
@@ -183,6 +181,130 @@ void MemFs::RemoveNode(FileNode& node, const bool reportDeletedSize) {
 	}
 	this->TouchParent(node);
 	node.Dereference();
+}
+
+NTSTATUS MemFs::RenameNode(FileNode& node, const std::wstring_view& newFileName, bool replaceIfExists) {
+	// WinFsp's COARSE operation guard serializes namespace callbacks. Prepare every
+	// allocation and lock before changing either namespace; commit transfers existing
+	// map references with C++17 node handles, which do not allocate.
+	try {
+		std::unique_lock mapLock(this->fileMapMutex);
+		const auto source = this->fileMap.find(node.fileName);
+		if (source == this->fileMap.end() || source->second != &node) {
+			return STATUS_OBJECT_NAME_NOT_FOUND;
+		}
+		if (node.fileName == L"\\" ||
+			(newFileName.size() > node.fileName.size() &&
+			 Utils::FileNameHasPrefix(newFileName.data(), (int)newFileName.size(), node.fileName.c_str(), (int)node.fileName.size(), this->IsCaseInsensitive()))) {
+			return STATUS_ACCESS_DENIED;
+		}
+
+		const auto destination = this->fileMap.find(newFileName);
+		const bool replace = destination != this->fileMap.end() && destination->second != &node;
+		if (replace) {
+			if (!replaceIfExists) {
+				return STATUS_OBJECT_NAME_COLLISION;
+			}
+			if (destination->second->fileInfo.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+				return STATUS_ACCESS_DENIED;
+			}
+		}
+
+		struct Change {
+			FileNodeMap::iterator entry;
+			std::wstring name;
+		};
+		std::vector<Change> changes;
+		std::vector<FileNodeMap::iterator> replaced;
+		FileNodeMap staged(this->fileMap.key_comp());
+		const size_t oldLength = node.fileName.size();
+		for (auto iter = source; iter != this->fileMap.end(); ++iter) {
+			FileNode* descendant = iter->second;
+			if (!Utils::FileNameHasPrefix(descendant->fileName.c_str(), (int)descendant->fileName.size(), node.fileName.c_str(), (int)oldLength, this->IsCaseInsensitive())) {
+				break;
+			}
+			const size_t suffixLength = descendant->fileName.size() - oldLength;
+			if (newFileName.size() >= MEMFS_MAX_PATH || suffixLength >= MEMFS_MAX_PATH - newFileName.size()) {
+				return STATUS_OBJECT_NAME_INVALID;
+			}
+			std::wstring name(newFileName);
+			name.append(descendant->fileName, oldLength, suffixLength);
+			if (!staged.emplace(name, descendant).second) {
+				return STATUS_OBJECT_NAME_COLLISION;
+			}
+			changes.push_back({iter, std::move(name)});
+		}
+
+		if (replace) {
+			replaced.push_back(destination);
+			// Replacing a main file also unlinks all its streams, including streams
+			// absent on the source. Open destination handles keep their own references.
+			if (destination->second->IsMainNode()) {
+				const std::wstring& destinationName = destination->second->fileName;
+				for (auto iter = std::next(destination); iter != this->fileMap.end(); ++iter) {
+					const std::wstring& name = iter->second->fileName;
+					if (name.size() <= destinationName.size() || name[destinationName.size()] != L':' ||
+						!Utils::FileNameHasPrefix(name.c_str(), (int)name.size(), destinationName.c_str(), (int)destinationName.size(), this->IsCaseInsensitive())) {
+						break;
+					}
+					replaced.push_back(iter);
+				}
+			}
+		}
+
+		std::unordered_set<FileNode*> removedNodes;
+		removedNodes.reserve(changes.size() + replaced.size());
+		for (const auto& change : changes) removedNodes.insert(change.entry->second);
+		for (const auto& entry : replaced) {
+			// Moving a stream over its own main file would both replace and move the
+			// same map entry. Reject overlapping trees before any iterator is erased.
+			if (!removedNodes.insert(entry->second).second) return STATUS_ACCESS_DENIED;
+		}
+		for (const auto& [name, descendant] : staged) {
+			const auto existing = this->fileMap.find(name);
+			if (existing == this->fileMap.end()) continue;
+			if (!removedNodes.contains(existing->second)) return STATUS_OBJECT_NAME_COLLISION;
+		}
+
+		std::vector<FileNode*> unlinked;
+		unlinked.reserve(replaced.size());
+		for (const auto& entry : replaced) unlinked.push_back(entry->second);
+		std::vector<std::unique_lock<std::shared_mutex>> nodeLocks;
+		nodeLocks.reserve(changes.size());
+		for (const auto& change : changes) nodeLocks.emplace_back(change.entry->second->nodeMutex);
+		const auto [parentStatus, oldParent] = this->FindParent(node.fileName);
+
+		{
+#if MEMFS_DIAGNOSTICS
+			const WriterGuard writerGuard(*this);
+#endif
+			for (const auto& entry : replaced) this->fileMap.erase(entry);
+			for (auto& change : changes) {
+				change.entry->second->fileName.swap(change.name);
+				this->fileMap.erase(change.entry);
+			}
+			while (!staged.empty()) this->fileMap.insert(staged.extract(staged.begin()));
+#if MEMFS_DIAGNOSTICS
+			this->diagMapEpoch.fetch_add(1, std::memory_order_relaxed);
+#endif
+		}
+		nodeLocks.clear();
+		mapLock.unlock();
+		for (FileNode* replacedNode : unlinked) replacedNode->Dereference();
+
+		// Timestamp updates are advisory once the namespace transaction has committed.
+		try {
+			if (oldParent.has_value()) {
+				FileNode& parent = oldParent.value();
+				std::unique_lock parentLock(parent.nodeMutex);
+				parent.fileInfo.LastAccessTime = parent.fileInfo.LastWriteTime = parent.fileInfo.ChangeTime = Utils::GetSystemTime();
+			}
+			this->TouchParent(node);
+		} catch (...) {}
+		return STATUS_SUCCESS;
+	} catch (const std::bad_alloc&) {
+		return STATUS_INSUFFICIENT_RESOURCES;
+	}
 }
 
 void MemFs::DiagReport() {

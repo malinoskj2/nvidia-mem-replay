@@ -1,0 +1,107 @@
+use super::*;
+
+const SAMPLE: &str =
+    r#"{"version":1,"written_bytes":17,"buffer_bytes":0,"resident_bytes":0,"available_bytes":200}"#;
+
+fn helper(script: &str) -> Helper {
+    let child = Command::new("sh")
+        .args(["-c", script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    Helper::from_child(child).unwrap()
+}
+
+fn wait_for_sample(helper: &mut Helper) {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while helper.sample().unwrap().is_none() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn shutdown_joins_reader_and_keeps_the_final_counter() {
+    let mut helper = helper(&format!(
+        "printf '%s\\n' '{}'; read command; printf '%s\\n' '{SAMPLE}'",
+        SAMPLE.replace("17", "5")
+    ));
+    wait_for_sample(&mut helper);
+    let stopped = helper.stop();
+    stopped.result.unwrap();
+    assert!(stopped.exited);
+    assert_eq!(stopped.sample.unwrap().written_bytes, 17);
+    assert!(helper.reader.is_none());
+    assert!(helper.child.try_wait().unwrap().is_some());
+}
+
+#[test]
+fn nonzero_exit_keeps_final_sample_and_reports_status() {
+    let mut helper = helper(&format!("read command; printf '%s\\n' '{SAMPLE}'; exit 42"));
+    let stopped = helper.stop();
+    assert!(stopped.exited);
+    assert_eq!(stopped.sample.unwrap().written_bytes, 17);
+    match stopped.result.unwrap_err() {
+        HelperError::FailedExit(status) => assert_eq!(status.code(), Some(42)),
+        error => panic!("unexpected shutdown error: {error}"),
+    }
+    assert!(helper.reader.is_none());
+}
+
+#[test]
+fn malformed_final_frame_keeps_last_sample_and_reports_failure() {
+    let mut helper = helper(&format!(
+        "read command; printf '%s\\n' '{SAMPLE}'; printf '%s\\n' 'invalid JSON'"
+    ));
+    let stopped = helper.stop();
+    assert!(stopped.exited);
+    assert_eq!(stopped.sample.unwrap().written_bytes, 17);
+    assert!(matches!(stopped.result, Err(HelperError::Telemetry(_))));
+}
+
+#[test]
+fn unsupported_final_protocol_keeps_last_valid_sample() {
+    let mut helper = helper(&format!(
+        "read command; printf '%s\\n' '{SAMPLE}'; printf '%s\\n' '{}'",
+        SAMPLE.replace("\"version\":1", "\"version\":2")
+    ));
+    let stopped = helper.stop();
+    assert_eq!(stopped.sample.unwrap().version, 1);
+    assert!(matches!(stopped.result, Err(HelperError::Telemetry(_))));
+}
+
+#[test]
+fn forced_shutdown_is_reported_and_keeps_the_latest_sample() {
+    let mut helper = helper(&format!(
+        "printf '%s\\n' '{SAMPLE}'; read command; exec sleep 30"
+    ));
+    wait_for_sample(&mut helper);
+    helper.shutdown_timeout = Duration::from_millis(100);
+    let stopped = helper.stop();
+    assert!(stopped.exited);
+    assert!(matches!(
+        stopped.result,
+        Err(HelperError::ForcedTermination)
+    ));
+    assert_eq!(stopped.sample.unwrap().written_bytes, 17);
+    assert!(helper.reader.is_none());
+    assert!(helper.child.try_wait().unwrap().is_some());
+}
+
+#[test]
+fn oversized_output_is_bounded_and_rejected() {
+    let mut helper = helper("printf '%2000s' x; read command");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if matches!(helper.sample(), Err(HelperError::Telemetry(_))) {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(matches!(
+        helper.stop().result,
+        Err(HelperError::Telemetry(_))
+    ));
+}

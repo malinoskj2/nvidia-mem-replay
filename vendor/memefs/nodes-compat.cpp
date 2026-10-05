@@ -13,6 +13,8 @@ namespace Memfs {
 			node->SetEa(ea);
 		} catch (CreateException& ex) {
 			return ex.Which();
+		} catch (const std::bad_alloc&) {
+			return STATUS_INSUFFICIENT_RESOURCES;
 		}
 
 		return STATUS_SUCCESS;
@@ -59,10 +61,15 @@ namespace Memfs {
 					}
 				}
 
-				// memefs: No null-initialization?
-				// if (fileNode->fileInfo.FileSize < NewSize)
-				//    memset((PUINT8)FileNode->FileData + fileNode->fileInfo.FileSize, 0,
-				//        (size_t)(NewSize - fileNode->fileInfo.FileSize));
+				// A truncated file can retain sectors containing its old data. Clear every
+				// newly visible byte, including gaps created by writes beyond EOF. The caller
+				// holds nodeMutex and allocation above has completed before any data changes.
+				for (UINT64 offset = fileNode->fileInfo.FileSize; offset < newSize;) {
+					const size_t sectorOffset = static_cast<size_t>(offset % FULL_SECTOR_SIZE);
+					const size_t length = static_cast<size_t>(min(newSize - offset, FULL_SECTOR_SIZE - sectorOffset));
+					memset(fileNode->GetSectorNode().Sectors[static_cast<size_t>(offset / FULL_SECTOR_SIZE)]->Bytes + sectorOffset, 0, length);
+					offset += length;
+				}
 				fileNode->fileInfo.FileSize = newSize;
 			}
 		}
