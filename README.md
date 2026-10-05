@@ -113,5 +113,6 @@ Application code forbids unsafe Rust; native C++ uses WinFsp's API.
 With Instant Replay off on a Windows NVIDIA machine, run
 `./scripts/smoke-windows.ps1` after installation. It checks mount, overwrite
 accounting, deletion, capacity failure, owner EOF restoration and unmount.
-See [docs/verification.md](docs/verification.md) for verification limits and
-remaining native checks.
+Native Windows installation, NVIDIA recording, replay saving, tray controls,
+crash recovery and capacity behavior still require testing on a Windows NVIDIA
+machine.

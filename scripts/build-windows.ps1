@@ -19,13 +19,12 @@ Copy-Item "$nativeOutput\memefs-x64.exe" dist\
 Copy-Item $setup dist\winfsp-2.1.25156.msi
 Copy-Item $source dist\source\winfsp-2.1-source.tar.gz
 Copy-Item README.md, LICENSE dist\
-Copy-Item docs\verification.md dist\
 Copy-Item licenses\* dist\licenses\
 # Include complete dependency sources and notices with the GPL application source.
 $stage = Join-Path $cache 'replay-source'
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
-$sourceFiles = @('src', 'vendor', 'scripts', 'installer', 'licenses', 'docs', '.cargo', 'Cargo.toml', 'Cargo.lock', 'LICENSE', 'README.md')
+$sourceFiles = @('src', 'vendor', 'scripts', 'installer', 'licenses', '.cargo', 'Cargo.toml', 'Cargo.lock', 'LICENSE', 'README.md')
 foreach ($item in $sourceFiles) { Copy-Item $item $stage -Recurse }
 $dependencies = Join-Path $stage 'dependencies'
 $vendorConfig = cargo vendor --locked --versioned-dirs $dependencies
