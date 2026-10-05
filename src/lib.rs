@@ -1,3 +1,10 @@
+#![allow(dead_code)]
+
+mod config;
+mod storage;
+mod sys;
+mod telemetry;
+
 use anyhow::Result;
 
 /// The recording application is available on Windows only.
