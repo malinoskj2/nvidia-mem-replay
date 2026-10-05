@@ -23,7 +23,7 @@ not configured. The app reads that setting each launch. Keep **Gallery** on an
 SSD or another persistent drive. Toggle Instant Replay off/on if NVIDIA needs
 to reload its cached settings.
 
-The default ceiling is 4096 decimal MB. Settings selects the ceiling and an unused
+The default ceiling is 8192 decimal MB. Settings selects the ceiling and an unused
 drive letter. **Apply and restart** discards RAM contents: save a wanted replay
 first. Existing drive/ceiling configuration and lifetime counters are retained.
 An old custom helper path is ignored; the matching bundled helper is always used.

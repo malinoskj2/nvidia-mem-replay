@@ -47,7 +47,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             drive: 'R',
-            memory_limit_mb: 4096,
+            memory_limit_mb: 8192,
         }
     }
 }
