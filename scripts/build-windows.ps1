@@ -24,7 +24,7 @@ Copy-Item licenses\* dist\licenses\
 $stage = Join-Path $cache 'replay-source'
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
-$sourceFiles = @('src', 'vendor', 'scripts', 'installer', 'licenses', '.cargo', 'Cargo.toml', 'Cargo.lock', 'LICENSE', 'README.md')
+$sourceFiles = @('src', 'tests', 'vendor', 'scripts', 'installer', 'licenses', '.cargo', 'Cargo.toml', 'Cargo.lock', 'LICENSE', 'README.md')
 foreach ($item in $sourceFiles) { Copy-Item $item $stage -Recurse }
 $dependencies = Join-Path $stage 'dependencies'
 $vendorConfig = cargo vendor --locked --versioned-dirs $dependencies

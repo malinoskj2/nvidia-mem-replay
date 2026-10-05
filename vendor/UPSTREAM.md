@@ -26,6 +26,15 @@ Local changes for Replay in RAM:
 - `MemFs` moves are explicitly deleted: a mounted instance owns a singleton address
   and atomics. The project uses the static C++ runtime, accepts a `WinFspSdk`
   build property, and builds the owned adapter rather than the service CLI.
+- Node creation and insertion return allocation errors without aborting the
+  filesystem. Namespace publication transfers ownership only after insertion
+  succeeds.
+- `RenameNode` stages names, map entries and locks before committing a rename.
+  Replacing a file unlinks its destination streams as well; existing open handles
+  retain their node references. Allocation failures leave both namespaces intact.
+- File-size growth clears newly exposed bytes, including retained sectors after
+  truncation. `tests/native/` exercises production methods with platform stubs and
+  allocation-failure injection; Windows smoke checks exercise the mounted volume.
 
 The owned Rust `filesystem` subprocess retains NVIDIA snapshot/restoration and
 forwards telemetry from the bundled `memefs-x64.exe`.

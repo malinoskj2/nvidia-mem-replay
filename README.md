@@ -32,6 +32,10 @@ Closing keeps recording active. Left-click the tray icon to reopen. The menu
 provides Show, Stop and restore, and Quit. Stop and Quit restore NVIDIA's original
 temporary path before unmounting and discarding RAM. If the tray cannot be
 created, closing exits and the GUI explains the fallback.
+Quit waits for cleanup to finish. If cleanup fails, the window shows the error
+and offers **Retry shutdown** or **Exit anyway**. A failed restoration keeps its
+recovery journal for the next launch; the original path can also be restored
+through the NVIDIA overlay.
 
 ## Storage and accounting
 
@@ -52,16 +56,20 @@ for the pinned source and local adapter changes.
   contribute, not just NVIDIA. This is not a measurement of avoided SSD writes.
 - Activity stays lit for two seconds after a write increase. Cumulative telemetry
   preserves bytes across skipped GUI samples. Lifetime checkpoints occur every
-  ten seconds and at orderly shutdown; abrupt termination can lose recent bytes.
+  ten seconds and at orderly shutdown. A failed checkpoint shows a warning and
+  retries every ten seconds while recording continues. Abrupt termination can
+  lose all bytes since the last successful checkpoint.
 - Buffer allocation, helper working set and available system RAM are separate
   readings. MB/GB use decimal units. Memory is pageable, so this does not guarantee
   physical residency or zero disk writes. Saved clips and checkpoints intentionally
   use persistent storage.
 
 The filesystem uses WinFsp's coarse operation guard to serialize callbacks and
-capacity checks. Its NVIDIA compatibility and recording throughput need native
-Windows testing. MemFS Extended's filesystem semantics replace the former custom
-Rust filesystem; the GUI and recovery behavior remain the same.
+capacity checks. File creation reports allocation failures without terminating
+the volume. Renames prepare their namespace changes before committing and replace
+destination alternate streams together with the file. Extending a truncated file
+clears newly exposed bytes. NVIDIA compatibility and recording throughput need
+native Windows testing.
 
 ## Discovery and recovery
 
@@ -76,8 +84,10 @@ The GUI sends its exact recovery snapshot to the Rust supervisor before
 readiness. The supervisor restores it on GUI control-pipe EOF, including GUI
 crashes. Its own exit closes the native
 helper's pipe, so MemFS unmounts. A subsequent launch recovers a pending journal
-following a supervisor crash. Restoration replaces only this app's exact value,
-preserving later user or NVIDIA edits.
+following a supervisor crash, before reading configuration or lifetime counters.
+Restoration replaces only this app's exact value, preserving later user or NVIDIA
+edits. Helper exit failures and invalid final telemetry are reported while the
+last valid write counter is retained for accounting.
 
 State is in `%LOCALAPPDATA%\NvidiaMemReplay`. A single-instance lock protects
 `config.json`, `lifetime.json` and `redirect.json`. Replay data disappears when
@@ -104,15 +114,21 @@ dependency sources. Keep `memefs-x64.exe` beside `nvidia-mem-replay.exe`.
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
+# Portable native regression harness (requires Python 3 and a C++20 compiler):
+python3 tests/native/run.py
 ```
 
 Portable lifecycle, storage, telemetry and registry representation tests run on
 Linux without a driver or display. Windows adapters and GUI are target restricted.
 Application code forbids unsafe Rust; native C++ uses WinFsp's API.
+The native harness exercises production methods with platform stubs, including
+allocation-failure injection and rename rollback; it does not replace driver
+integration testing.
 
 With Instant Replay off on a Windows NVIDIA machine, run
 `./scripts/smoke-windows.ps1` after installation. It checks mount, overwrite
-accounting, deletion, capacity failure, owner EOF restoration and unmount.
+accounting, deletion, truncate/extend clearing, alternate-stream replacement,
+capacity failure, owner EOF restoration and unmount.
 Native Windows installation, NVIDIA recording, replay saving, tray controls,
 crash recovery and capacity behavior still require testing on a Windows NVIDIA
 machine.

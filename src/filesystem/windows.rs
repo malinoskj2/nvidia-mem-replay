@@ -87,70 +87,12 @@ fn run(config: &Config) -> Result<()> {
         let _ = reader.join();
     }
     // Forward completed writes even when reporting or restoration failed.
-    let final_report = super::report_final(
-        &mut stdout,
-        stopped.as_ref().ok().and_then(Option::as_ref),
-        reporting,
-    );
+    let final_report = super::report_final(&mut stdout, stopped, reporting);
     restored?;
-    stopped?;
     final_report?;
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn filesystem_cli_rejects_invalid_or_incomplete_configuration() {
-        assert!(
-            Cli::try_parse_from([
-                "replay",
-                "filesystem",
-                "--drive",
-                "T",
-                "--memory-limit-mb",
-                "256"
-            ])
-            .is_ok()
-        );
-        for args in [
-            vec!["replay", "filesystem"],
-            vec![
-                "replay",
-                "filesystem",
-                "--drive",
-                "C",
-                "--memory-limit-mb",
-                "256",
-            ],
-            vec![
-                "replay",
-                "filesystem",
-                "--drive",
-                "TT",
-                "--memory-limit-mb",
-                "256",
-            ],
-            vec![
-                "replay",
-                "filesystem",
-                "--drive",
-                "T",
-                "--memory-limit-mb",
-                "0",
-            ],
-            vec![
-                "replay",
-                "filesystem",
-                "--drive",
-                "T",
-                "--memory-limit-mb",
-                "65537",
-            ],
-        ] {
-            assert!(Cli::try_parse_from(args).is_err());
-        }
-    }
-}
+#[path = "../../tests/unit/filesystem_cli.rs"]
+mod tests;

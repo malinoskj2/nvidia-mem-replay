@@ -1,7 +1,7 @@
 use crate::{config::Config, sys::nvidia::Redirect, telemetry::Sample};
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
-    process::{Child, ChildStdin, Command, Stdio},
+    process::{Child, ChildStdin, Command, ExitStatus, Stdio},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -22,8 +22,12 @@ pub(crate) enum HelperError {
         "RAM filesystem stopped unexpectedly; run the bundled installer to install or repair WinFsp 2.1, and restart Windows if requested"
     )]
     Exited,
+    #[error("RAM filesystem helper exited with {0}")]
+    FailedExit(ExitStatus),
     #[error("RAM filesystem helper exceeded its shutdown deadline and was forcibly terminated")]
     ForcedTermination,
+    #[error("RAM filesystem helper did not exit after forced termination")]
+    TerminationTimeout,
     #[error("recovery snapshot JSON: {0}")]
     Snapshot(#[from] serde_json::Error),
     #[error("recovery snapshot exceeds 64 KB")]
@@ -36,6 +40,12 @@ pub(crate) enum HelperError {
 struct Inbox {
     latest: Option<(Sample, Instant)>,
     error: Option<String>,
+}
+
+pub(crate) struct ShutdownReport {
+    pub(crate) sample: Option<Sample>,
+    pub(crate) result: Result<(), HelperError>,
+    pub(crate) exited: bool,
 }
 
 pub(crate) struct Helper {
@@ -126,7 +136,7 @@ impl Helper {
         }
     }
 
-    fn from_child(mut child: Child) -> Result<Self, HelperError> {
+    pub(crate) fn from_child(mut child: Child) -> Result<Self, HelperError> {
         let stdout = child
             .stdout
             .take()
@@ -143,9 +153,15 @@ impl Helper {
                     Ok(_) if line.len() > 1024 || !line.ends_with(b"\n") => {
                         Err("invalid or oversized helper telemetry".to_owned())
                     }
-                    Ok(_) => {
-                        serde_json::from_slice::<Sample>(&line).map_err(|error| error.to_string())
-                    }
+                    Ok(_) => serde_json::from_slice::<Sample>(&line)
+                        .map_err(|error| error.to_string())
+                        .and_then(|sample| {
+                            if sample.version == 1 {
+                                Ok(sample)
+                            } else {
+                                Err(format!("unsupported protocol version {}", sample.version))
+                            }
+                        }),
                     Err(error) => Err(error.to_string()),
                 };
                 let Ok(mut inbox) = output.lock() else { break };
@@ -186,21 +202,50 @@ impl Helper {
         }
     }
 
-    pub(crate) fn stop(&mut self) -> Result<Option<Sample>, HelperError> {
+    pub(crate) fn stop(&mut self) -> ShutdownReport {
+        let result = self.stop_process();
+        let exited = self.child.try_wait().is_ok_and(|status| status.is_some());
+        let inbox = self.inbox.lock();
+        match inbox {
+            Ok(inbox) => ShutdownReport {
+                exited,
+                sample: inbox.latest.as_ref().map(|(sample, _)| sample.clone()),
+                result: result.and_then(|()| {
+                    inbox
+                        .error
+                        .as_ref()
+                        .map_or(Ok(()), |error| Err(HelperError::Telemetry(error.clone())))
+                }),
+            },
+            Err(_) => ShutdownReport {
+                exited,
+                sample: None,
+                result: result
+                    .and_then(|()| Err(HelperError::Telemetry("telemetry lock failed".to_owned()))),
+            },
+        }
+    }
+
+    fn stop_process(&mut self) -> Result<(), HelperError> {
         if let Some(mut input) = self.input.take() {
             let _ = input.write_all(b"stop\n");
         }
-        let deadline = Instant::now() + self.shutdown_timeout;
+        let mut deadline = Instant::now() + self.shutdown_timeout;
         let mut forced = false;
-        while self.child.try_wait()?.is_none() {
+        let status = loop {
+            if let Some(status) = self.child.try_wait()? {
+                break status;
+            }
             if Instant::now() >= deadline {
+                if forced {
+                    return Err(HelperError::TerminationTimeout);
+                }
                 self.child.kill()?;
                 forced = true;
-                break;
+                deadline = Instant::now() + Duration::from_secs(1);
             }
             thread::sleep(Duration::from_millis(50));
-        }
-        self.child.wait()?;
+        };
         if let Some(reader) = self.reader.take() {
             reader
                 .join()
@@ -209,74 +254,26 @@ impl Helper {
         if forced {
             return Err(HelperError::ForcedTermination);
         }
-        let inbox = self
-            .inbox
-            .lock()
-            .map_err(|_| HelperError::Telemetry("telemetry lock failed".to_owned()))?;
-        Ok(inbox.latest.as_ref().map(|(sample, _)| sample.clone()))
+        if !status.success() {
+            return Err(HelperError::FailedExit(status));
+        }
+        Ok(())
     }
 }
 
 impl Drop for Helper {
     fn drop(&mut self) {
-        if self.reader.is_some() {
+        if self.reader.is_some()
+            || self
+                .child
+                .try_wait()
+                .map_or(true, |status| status.is_none())
+        {
             let _ = self.stop();
         }
     }
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shutdown_joins_reader_and_keeps_the_final_counter() {
-        let child = Command::new("sh")
-            .args(["-c", "printf '%s\\n' '{\"version\":1,\"written_bytes\":5,\"buffer_bytes\":100,\"resident_bytes\":50,\"available_bytes\":200}'; read command; printf '%s\\n' '{\"version\":1,\"written_bytes\":17,\"buffer_bytes\":0,\"resident_bytes\":0,\"available_bytes\":200}'"])
-            .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-        let mut helper = Helper::from_child(child).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while helper.sample().unwrap().is_none() {
-            assert!(Instant::now() < deadline);
-            thread::sleep(Duration::from_millis(10));
-        }
-        assert_eq!(helper.stop().unwrap().unwrap().written_bytes, 17);
-        assert!(helper.reader.is_none());
-        assert!(helper.child.try_wait().unwrap().is_some());
-    }
-
-    #[test]
-    fn forced_shutdown_is_reported() {
-        let child = Command::new("sh")
-            .args(["-c", "read command; exec sleep 30"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut helper = Helper::from_child(child).unwrap();
-        helper.shutdown_timeout = Duration::from_millis(100);
-        assert!(matches!(helper.stop(), Err(HelperError::ForcedTermination)));
-        assert!(helper.reader.is_none());
-        assert!(helper.child.try_wait().unwrap().is_some());
-    }
-
-    #[test]
-    fn oversized_output_is_bounded_and_rejected() {
-        let child = Command::new("sh")
-            .args(["-c", "printf '%2000s' x; read command"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut helper = Helper::from_child(child).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            if matches!(helper.sample(), Err(HelperError::Telemetry(_))) {
-                break;
-            }
-            assert!(Instant::now() < deadline);
-            thread::sleep(Duration::from_millis(10));
-        }
-        helper.stop().unwrap();
-    }
-}
+#[path = "../../tests/unit/helper.rs"]
+mod tests;
