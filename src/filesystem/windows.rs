@@ -1,5 +1,5 @@
 use crate::{
-    config::Config,
+    config::{Config, MAX_DRIVE, MAX_MEMORY_LIMIT_MB, MIN_DRIVE, MIN_MEMORY_LIMIT_MB},
     sys::{helper::Helper, nvidia},
 };
 use anyhow::{Context as _, Result};
@@ -10,6 +10,9 @@ use std::{
     thread,
     time::Duration,
 };
+
+const TELEMETRY_REPORT_INTERVAL: Duration = Duration::from_millis(250);
+const MAX_STOP_COMMAND_BYTES: u64 = 512;
 
 #[derive(Parser)]
 #[command(name = "Replay in RAM")]
@@ -25,7 +28,7 @@ enum Mode {
     Filesystem {
         #[arg(long, value_parser = drive)]
         drive: char,
-        #[arg(long, value_parser = clap::value_parser!(u32).range(256..=65536))]
+        #[arg(long, value_parser = clap::value_parser!(u32).range(i64::from(MIN_MEMORY_LIMIT_MB)..=i64::from(MAX_MEMORY_LIMIT_MB)))]
         memory_limit_mb: u32,
     },
 }
@@ -33,7 +36,7 @@ enum Mode {
 fn drive(value: &str) -> Result<char, String> {
     let mut chars = value.chars();
     match (chars.next(), chars.next()) {
-        (Some(letter @ 'D'..='Z'), None) => Ok(letter),
+        (Some(letter), None) if (MIN_DRIVE..=MAX_DRIVE).contains(&letter) => Ok(letter),
         _ => Err("drive must be one letter D through Z".to_owned()),
     }
 }
@@ -60,7 +63,10 @@ fn run(config: &Config) -> Result<()> {
     let (stop, receiver) = mpsc::sync_channel(1);
     let reader = thread::spawn(move || {
         let mut line = Vec::new();
-        let _ = io::stdin().lock().take(512).read_until(b'\n', &mut line);
+        let _ = io::stdin()
+            .lock()
+            .take(MAX_STOP_COMMAND_BYTES)
+            .read_until(b'\n', &mut line);
         let _ = stop.send(());
     });
     let mut stdout = io::stdout().lock();
@@ -72,7 +78,7 @@ fn run(config: &Config) -> Result<()> {
                 stdout.flush()?;
             }
             if !matches!(
-                receiver.recv_timeout(Duration::from_millis(250)),
+                receiver.recv_timeout(TELEMETRY_REPORT_INTERVAL),
                 Err(mpsc::RecvTimeoutError::Timeout)
             ) {
                 break;
@@ -94,5 +100,4 @@ fn run(config: &Config) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/filesystem_cli.rs"]
 mod tests;

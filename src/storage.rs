@@ -7,6 +7,8 @@ use std::{
 };
 use thiserror::Error;
 
+const MAX_STATE_BYTES: usize = 64 * 1024;
+
 #[derive(Debug, Error)]
 pub(crate) enum StorageError {
     #[error("state I/O: {0}")]
@@ -86,8 +88,9 @@ impl Store {
             Err(error) => return Err(error.into()),
         };
         let mut bytes = Vec::new();
-        file.take(65_537).read_to_end(&mut bytes)?;
-        if bytes.len() > 65_536 {
+        file.take(MAX_STATE_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > MAX_STATE_BYTES {
             return Err(StorageError::Oversized);
         }
         Ok(Some(serde_json::from_slice(&bytes)?))
@@ -95,7 +98,7 @@ impl Store {
 
     fn write<T: Serialize>(&self, name: &str, value: &T) -> Result<(), StorageError> {
         let bytes = serde_json::to_vec_pretty(value)?;
-        if bytes.len() > 65_536 {
+        if bytes.len() > MAX_STATE_BYTES {
             return Err(StorageError::Oversized);
         }
         atomic_write(&self.root.join(name), &bytes)?;
@@ -124,5 +127,4 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/storage.rs"]
 mod tests;

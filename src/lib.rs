@@ -62,5 +62,4 @@ fn startup_config(
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/startup.rs"]
-mod startup_tests;
+mod tests;

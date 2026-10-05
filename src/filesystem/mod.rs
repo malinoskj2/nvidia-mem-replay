@@ -5,6 +5,9 @@ use crate::{
 use anyhow::{Context as _, Result};
 use std::io::{BufRead, Read, Write};
 
+// The snapshot frame includes the trailing newline sent by the GUI.
+pub(crate) const MAX_RECOVERY_SNAPSHOT_BYTES: usize = 65_536;
+
 #[cfg(windows)]
 mod windows;
 
@@ -15,9 +18,11 @@ pub(crate) fn dispatch() -> anyhow::Result<bool> {
 
 pub(super) fn read_redirect(reader: &mut impl BufRead, config: &Config) -> Result<Redirect> {
     let mut bytes = Vec::new();
-    reader.take(65_537).read_until(b'\n', &mut bytes)?;
+    reader
+        .take((MAX_RECOVERY_SNAPSHOT_BYTES + 1) as u64)
+        .read_until(b'\n', &mut bytes)?;
     anyhow::ensure!(
-        bytes.len() <= 65_536 && bytes.ends_with(b"\n"),
+        bytes.len() <= MAX_RECOVERY_SNAPSHOT_BYTES && bytes.ends_with(b"\n"),
         "invalid or oversized recovery snapshot"
     );
     let redirect: Redirect = serde_json::from_slice(&bytes).context("decode recovery snapshot")?;
@@ -45,5 +50,4 @@ pub(super) fn report_final(
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/filesystem.rs"]
 mod tests;

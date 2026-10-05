@@ -105,3 +105,13 @@ fn oversized_output_is_bounded_and_rejected() {
         Err(HelperError::Telemetry(_))
     ));
 }
+
+#[test]
+fn process_failure_takes_precedence_over_invalid_final_telemetry() {
+    let mut helper = helper(&format!(
+        "read command; printf '%s\\n' '{SAMPLE}'; printf '%s\\n' 'invalid JSON'; exit 42"
+    ));
+    let stopped = helper.stop();
+    assert_eq!(stopped.sample.unwrap().written_bytes, 17);
+    assert!(matches!(stopped.result, Err(HelperError::FailedExit(_))));
+}

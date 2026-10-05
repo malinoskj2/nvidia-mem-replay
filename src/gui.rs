@@ -1,5 +1,5 @@
 use crate::{
-    config::Config,
+    config::{Config, MAX_DRIVE, MAX_MEMORY_LIMIT_MB, MIN_DRIVE, MIN_MEMORY_LIMIT_MB},
     service::{Shutdown, Status, Worker},
     sys::tray::Tray,
 };
@@ -47,7 +47,7 @@ impl App {
         } else {
             Color32::GRAY
         };
-        ui.label(RichText::new(format!("●  {}", status.message)).color(color));
+        ui.label(RichText::new(format!("●  {}", status.message.as_str())).color(color));
         ui.add_space(18.0);
         ui.horizontal(|ui| {
             metric(
@@ -187,7 +187,7 @@ impl App {
                         egui::ComboBox::from_id_salt("drive")
                             .selected_text(format!("{}:", self.config.drive))
                             .show_ui(ui, |ui| {
-                                for letter in 'D'..='Z' {
+                                for letter in MIN_DRIVE..=MAX_DRIVE {
                                     ui.selectable_value(
                                         &mut self.config.drive,
                                         letter,
@@ -198,7 +198,7 @@ impl App {
                         ui.label("Ceiling (MB)");
                         ui.add(
                             egui::DragValue::new(&mut self.config.memory_limit_mb)
-                                .range(256..=65536),
+                                .range(MIN_MEMORY_LIMIT_MB..=MAX_MEMORY_LIMIT_MB),
                         );
                     });
                     ui.label(

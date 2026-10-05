@@ -1,6 +1,11 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub(crate) const MIN_DRIVE: char = 'D';
+pub(crate) const MAX_DRIVE: char = 'Z';
+pub(crate) const MIN_MEMORY_LIMIT_MB: u32 = 256;
+pub(crate) const MAX_MEMORY_LIMIT_MB: u32 = 65_536;
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Config {
     pub(crate) drive: char,
@@ -57,10 +62,10 @@ pub(crate) enum ConfigError {
 
 impl Config {
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        if !('D'..='Z').contains(&self.drive) {
+        if !(MIN_DRIVE..=MAX_DRIVE).contains(&self.drive) {
             return Err(ConfigError::Drive);
         }
-        if !(256..=65536).contains(&self.memory_limit_mb) {
+        if !(MIN_MEMORY_LIMIT_MB..=MAX_MEMORY_LIMIT_MB).contains(&self.memory_limit_mb) {
             return Err(ConfigError::Memory);
         }
         Ok(())
@@ -80,5 +85,4 @@ impl Config {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/config.rs"]
 mod tests;

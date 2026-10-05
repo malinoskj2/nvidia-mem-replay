@@ -1,4 +1,9 @@
-use crate::{config::Config, sys::nvidia::Redirect, telemetry::Sample};
+use crate::{
+    config::Config,
+    filesystem::MAX_RECOVERY_SNAPSHOT_BYTES,
+    sys::nvidia::Redirect,
+    telemetry::{MAX_TELEMETRY_FRAME_BYTES, Sample, TELEMETRY_TIMEOUT, decode_sample},
+};
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
     process::{Child, ChildStdin, Command, ExitStatus, Stdio},
@@ -7,6 +12,13 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
+
+const READY_TIMEOUT: Duration = Duration::from_secs(15);
+const READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const RECOVERY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const FORCED_TERMINATION_TIMEOUT: Duration = Duration::from_secs(1);
+const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Error)]
 pub(crate) enum HelperError {
@@ -106,13 +118,16 @@ impl Helper {
         redirect: Option<&Redirect>,
     ) -> Result<Self, HelperError> {
         let snapshot = redirect.map(serde_json::to_vec).transpose()?;
-        if snapshot.as_ref().is_some_and(|bytes| bytes.len() >= 65_536) {
+        if snapshot
+            .as_ref()
+            .is_some_and(|bytes| bytes.len() >= MAX_RECOVERY_SNAPSHOT_BYTES)
+        {
             return Err(HelperError::SnapshotOversized);
         }
         let mut helper = Self::from_child(command.spawn()?)?;
         if let Some(snapshot) = snapshot {
             // The first telemetry frame acknowledges receipt of this exact snapshot.
-            helper.shutdown_timeout = Duration::from_secs(10);
+            helper.shutdown_timeout = RECOVERY_SHUTDOWN_TIMEOUT;
             let input = helper
                 .input
                 .as_mut()
@@ -120,19 +135,16 @@ impl Helper {
             input.write_all(&snapshot)?;
             input.write_all(b"\n")?;
         }
-        let deadline = Instant::now() + Duration::from_secs(15);
+        let deadline = Instant::now() + READY_TIMEOUT;
         loop {
-            if let Some(sample) = helper.sample()? {
-                if sample.version != 1 {
-                    return Err(HelperError::Telemetry("unsupported protocol".to_owned()));
-                }
+            if helper.sample()?.is_some() {
                 std::fs::create_dir_all(config.target())?;
                 return Ok(helper);
             }
             if Instant::now() >= deadline {
                 return Err(HelperError::Timeout);
             }
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(READY_POLL_INTERVAL);
         }
     }
 
@@ -147,21 +159,13 @@ impl Helper {
             let mut reader = BufReader::new(stdout);
             loop {
                 let mut line = Vec::new();
-                let result = reader.by_ref().take(1025).read_until(b'\n', &mut line);
+                let result = reader
+                    .by_ref()
+                    .take((MAX_TELEMETRY_FRAME_BYTES + 1) as u64)
+                    .read_until(b'\n', &mut line);
                 let parsed = match result {
                     Ok(0) => break,
-                    Ok(_) if line.len() > 1024 || !line.ends_with(b"\n") => {
-                        Err("invalid or oversized helper telemetry".to_owned())
-                    }
-                    Ok(_) => serde_json::from_slice::<Sample>(&line)
-                        .map_err(|error| error.to_string())
-                        .and_then(|sample| {
-                            if sample.version == 1 {
-                                Ok(sample)
-                            } else {
-                                Err(format!("unsupported protocol version {}", sample.version))
-                            }
-                        }),
+                    Ok(_) => decode_sample(&line),
                     Err(error) => Err(error.to_string()),
                 };
                 let Ok(mut inbox) = output.lock() else { break };
@@ -179,7 +183,7 @@ impl Helper {
             child,
             reader: Some(reader),
             inbox,
-            shutdown_timeout: Duration::from_secs(5),
+            shutdown_timeout: SHUTDOWN_TIMEOUT,
         })
     }
 
@@ -194,35 +198,43 @@ impl Helper {
         if self.child.try_wait()?.is_some() {
             return Err(HelperError::Exited);
         }
-        match &inbox.latest {
-            Some((_, observed)) if observed.elapsed() > Duration::from_secs(3) => Err(
-                HelperError::Telemetry("helper stopped publishing telemetry".to_owned()),
-            ),
-            sample => Ok(sample.as_ref().map(|(sample, _)| sample.clone())),
+        let Some((sample, observed)) = &inbox.latest else {
+            return Ok(None);
+        };
+        if observed.elapsed() > TELEMETRY_TIMEOUT {
+            return Err(HelperError::Telemetry(
+                "helper stopped publishing telemetry".to_owned(),
+            ));
         }
+        Ok(Some(sample.clone()))
     }
 
     pub(crate) fn stop(&mut self) -> ShutdownReport {
-        let result = self.stop_process();
-        let exited = self.child.try_wait().is_ok_and(|status| status.is_some());
-        let inbox = self.inbox.lock();
-        match inbox {
-            Ok(inbox) => ShutdownReport {
-                exited,
-                sample: inbox.latest.as_ref().map(|(sample, _)| sample.clone()),
-                result: result.and_then(|()| {
-                    inbox
-                        .error
-                        .as_ref()
-                        .map_or(Ok(()), |error| Err(HelperError::Telemetry(error.clone())))
-                }),
-            },
-            Err(_) => ShutdownReport {
-                exited,
-                sample: None,
-                result: result
-                    .and_then(|()| Err(HelperError::Telemetry("telemetry lock failed".to_owned()))),
-            },
+        let process_result = self.stop_process();
+        let exited = matches!(self.child.try_wait(), Ok(Some(_)));
+        let (sample, telemetry_result) = match self.inbox.lock() {
+            Ok(inbox) => {
+                let sample = inbox.latest.as_ref().map(|(sample, _)| sample.clone());
+                let result = match &inbox.error {
+                    Some(error) => Err(HelperError::Telemetry(error.clone())),
+                    None => Ok(()),
+                };
+                (sample, result)
+            }
+            Err(_) => (
+                None,
+                Err(HelperError::Telemetry("telemetry lock failed".to_owned())),
+            ),
+        };
+        // A process failure takes precedence, while the last sample is always retained.
+        let result = match process_result {
+            Ok(()) => telemetry_result,
+            Err(error) => Err(error),
+        };
+        ShutdownReport {
+            sample,
+            result,
+            exited,
         }
     }
 
@@ -242,9 +254,9 @@ impl Helper {
                 }
                 self.child.kill()?;
                 forced = true;
-                deadline = Instant::now() + Duration::from_secs(1);
+                deadline = Instant::now() + FORCED_TERMINATION_TIMEOUT;
             }
-            thread::sleep(Duration::from_millis(50));
+            thread::sleep(SHUTDOWN_POLL_INTERVAL);
         };
         if let Some(reader) = self.reader.take() {
             reader
@@ -275,5 +287,4 @@ impl Drop for Helper {
 }
 
 #[cfg(all(test, unix))]
-#[path = "../../tests/unit/helper.rs"]
 mod tests;

@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use thiserror::Error;
 
+const MAX_REGISTRY_VALUE_BYTES: usize = 64 * 1024;
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub(crate) struct RawValue {
     pub(crate) kind: u32,
@@ -45,7 +47,7 @@ impl RawValue {
         // NVIDIA versions use both REG_SZ and UTF-16 REG_BINARY.
         if !matches!(self.kind, 1..=3)
             || !self.bytes.len().is_multiple_of(2)
-            || self.bytes.len() > 65536
+            || self.bytes.len() > MAX_REGISTRY_VALUE_BYTES
         {
             return Err(NvidiaError::Format);
         }
@@ -86,10 +88,8 @@ impl RawValue {
 pub(crate) fn plan(target: String) -> Result<Redirect, NvidiaError> {
     let original = read()?;
     let original_path = original.path()?;
-    if original_path
-        .get(..2)
-        .zip(target.get(..2))
-        .is_some_and(|(original, target)| original.eq_ignore_ascii_case(target))
+    if let (Some(original_drive), Some(target_drive)) = (original_path.get(..2), target.get(..2))
+        && original_drive.eq_ignore_ascii_case(target_drive)
     {
         return Err(NvidiaError::RamOriginal);
     }
@@ -117,7 +117,12 @@ impl Redirect {
 /// Only restore our own value; a later user/overlay edit takes precedence.
 pub(crate) fn restore(redirect: &Redirect) -> Result<(), NvidiaError> {
     match read() {
-        Ok(value) => redirect.restore_value(&value).map_or(Ok(()), write),
+        Ok(value) => {
+            if let Some(original) = redirect.restore_value(&value) {
+                write(original)?;
+            }
+            Ok(())
+        }
         Err(NvidiaError::Missing) => Ok(()),
         Err(error) => Err(error),
     }
@@ -186,5 +191,4 @@ const fn write(_: &RawValue) -> Result<(), NvidiaError> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/nvidia.rs"]
 mod tests;

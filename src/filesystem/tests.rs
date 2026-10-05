@@ -38,7 +38,13 @@ fn rejects_incomplete_oversized_and_mismatched_snapshots() {
     let mut snapshot = redirect(&config);
     let bytes = serde_json::to_vec(&snapshot).unwrap();
     assert!(read_redirect(&mut Cursor::new(bytes), &config).is_err());
-    assert!(read_redirect(&mut Cursor::new(vec![b'x'; 65_537]), &config).is_err());
+    assert!(
+        read_redirect(
+            &mut Cursor::new(vec![b'x'; MAX_RECOVERY_SNAPSHOT_BYTES + 1]),
+            &config
+        )
+        .is_err()
+    );
     snapshot.replacement = snapshot.original.with_path(r"T:\Wrong");
     let mut bytes = serde_json::to_vec(&snapshot).unwrap();
     bytes.push(b'\n');
@@ -48,7 +54,7 @@ fn rejects_incomplete_oversized_and_mismatched_snapshots() {
 #[test]
 fn final_counter_is_forwarded_before_reporting_failure() {
     let sample = Sample {
-        version: 1,
+        version: crate::telemetry::TELEMETRY_PROTOCOL_VERSION,
         written_bytes: 123,
         buffer_bytes: 0,
         resident_bytes: None,
@@ -77,7 +83,7 @@ fn final_counter_is_forwarded_before_reporting_failure() {
 #[test]
 fn final_counter_is_forwarded_before_shutdown_failure() {
     let sample = Sample {
-        version: 1,
+        version: crate::telemetry::TELEMETRY_PROTOCOL_VERSION,
         written_bytes: 123,
         buffer_bytes: 0,
         resident_bytes: None,

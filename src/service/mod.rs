@@ -2,22 +2,28 @@ use crate::{
     config::Config,
     storage::Store,
     sys::{
-        helper::{Helper, ShutdownReport},
+        helper::Helper,
         nvidia::{self, Redirect},
     },
-    telemetry::{Meter, Sample},
+    telemetry::{Meter, Sample, TELEMETRY_TIMEOUT},
 };
 use anyhow::{Context, Result};
 use std::fmt::Write as _;
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+
+mod accounting;
+mod cleanup;
+use accounting::Accounting;
+use cleanup::{complete_shutdown, stop};
+
+const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Shutdown {
@@ -28,9 +34,39 @@ pub(crate) enum Shutdown {
     Complete,
 }
 
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub(crate) enum DisplayStatus {
+    #[default]
+    Preparing,
+    StartFailed,
+    Waiting,
+    Writing,
+    Ready,
+    Stopping,
+    Stopped,
+    CleanupFailed,
+    HelperRunning,
+}
+
+impl DisplayStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Preparing => "Preparing RAM storage…",
+            Self::StartFailed => "Could not start RAM storage",
+            Self::Waiting => "RAM ready · waiting for NVIDIA writes",
+            Self::Writing => "Data is being written to RAM",
+            Self::Ready => "RAM ready · no writes in the last 2 seconds",
+            Self::Stopping => "Stopping RAM storage…",
+            Self::Stopped => "Stopped · temporary location restored",
+            Self::CleanupFailed => "Stopped · cleanup needs attention",
+            Self::HelperRunning => "RAM helper is still running · retry stopping",
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct Status {
-    pub(crate) message: String,
+    pub(crate) message: DisplayStatus,
     pub(crate) mounted: bool,
     pub(crate) active: bool,
     pub(crate) lifetime_bytes: u64,
@@ -41,7 +77,6 @@ pub(crate) struct Status {
     pub(crate) error: Option<String>,
     pub(crate) warning: Option<String>,
     pub(crate) shutdown: Shutdown,
-    lifetime_dirty: bool,
 }
 
 enum Command {
@@ -49,7 +84,12 @@ enum Command {
     Stop,
     Shutdown,
     Exit,
-    Idle,
+}
+
+#[derive(Default)]
+struct Mailbox {
+    pending: Option<Command>,
+    closing: bool,
 }
 
 pub(crate) struct Worker {
@@ -60,25 +100,24 @@ pub(crate) struct Worker {
 
 #[derive(Clone)]
 struct Control {
-    pending: Arc<Mutex<Command>>,
+    mailbox: Arc<Mutex<Mailbox>>,
     wake: SyncSender<()>,
-    closing: Arc<AtomicBool>,
 }
 
 impl Control {
     fn request(&self, command: Command) {
-        if let Ok(mut pending) = self.pending.lock() {
-            if matches!(*pending, Command::Exit) {
+        if let Ok(mut mailbox) = self.mailbox.lock() {
+            if matches!(mailbox.pending, Some(Command::Exit)) {
                 return;
             }
             if matches!(command, Command::Shutdown | Command::Exit) {
-                self.closing.store(true, Ordering::Relaxed);
-            } else if self.closing.load(Ordering::Relaxed) {
+                mailbox.closing = true;
+            } else if mailbox.closing {
                 return;
             }
-            // The most recent desired state replaces any earlier pending request.
-            *pending = command;
-            // A full channel already contains a wake-up; the command itself is retained.
+            // The latest desired state replaces pending work; Exit is final.
+            mailbox.pending = Some(command);
+            // A full channel already contains a wake-up; the request is retained.
             let _ = self.wake.try_send(());
         }
     }
@@ -88,17 +127,13 @@ impl Worker {
     pub(crate) fn spawn(store: Store, config: Config) -> Self {
         let (wake, receiver) = mpsc::sync_channel(1);
         let control = Control {
-            pending: Arc::new(Mutex::new(Command::Idle)),
+            mailbox: Arc::new(Mutex::new(Mailbox::default())),
             wake,
-            closing: Arc::new(AtomicBool::new(false)),
         };
-        let status = Arc::new(Mutex::new(Status {
-            message: "Preparing RAM storage…".to_owned(),
-            ..Status::default()
-        }));
+        let status = Arc::new(Mutex::new(Status::default()));
         let output = Arc::clone(&status);
-        let pending = Arc::clone(&control.pending);
-        let join = thread::spawn(move || run(&store, &config, &receiver, &pending, &output));
+        let mailbox = Arc::clone(&control.mailbox);
+        let join = thread::spawn(move || run(&store, &config, &receiver, &mailbox, &output));
         Self {
             control,
             status,
@@ -107,13 +142,13 @@ impl Worker {
     }
 
     pub(crate) fn status(&self) -> Status {
-        self.status.lock().map_or_else(
-            |_| Status {
+        match self.status.lock() {
+            Ok(status) => status.clone(),
+            Err(_) => Status {
                 error: Some("worker state unavailable".to_owned()),
                 ..Status::default()
             },
-            |status| status.clone(),
-        )
+        }
     }
 
     pub(crate) fn start(&self, config: Config) {
@@ -122,19 +157,15 @@ impl Worker {
 
     pub(crate) fn stop_handle(&self) -> impl Fn() + Send + Sync + 'static {
         let control = self.control.clone();
-        move || {
-            control.request(Command::Stop);
-        }
+        move || control.request(Command::Stop)
     }
 
     pub(crate) fn stop(&self) {
         self.control.request(Command::Stop);
     }
-
     pub(crate) fn shutdown(&self) {
         self.control.request(Command::Shutdown);
     }
-
     pub(crate) fn exit(&self) {
         self.control.request(Command::Exit);
     }
@@ -142,7 +173,7 @@ impl Worker {
 
 impl Drop for Worker {
     fn drop(&mut self) {
-        // Window teardown is a fallback; normal Quit waits for published cleanup results.
+        // Window teardown is a fallback; normal Quit waits for cleanup results.
         self.control.request(Command::Exit);
         if let Some(join) = self.join.take() {
             let _ = join.join();
@@ -154,98 +185,145 @@ struct Session {
     helper: Helper,
     redirect: Redirect,
     meter: Meter,
+    sample: Option<Sample>,
     last_sample: Instant,
     checkpoint: Instant,
     stopping: bool,
+}
+
+#[derive(Default)]
+struct State {
+    session: Option<Session>,
+    accounting: Accounting,
+    message: DisplayStatus,
+    location: Option<Redirect>,
+    memory_limit_bytes: Option<u64>,
+    error: Option<String>,
+    shutdown: Shutdown,
+}
+
+impl State {
+    fn snapshot(&self) -> Status {
+        let active = self
+            .session
+            .as_ref()
+            .is_some_and(|session| !session.stopping && session.meter.active(Instant::now()));
+        Status {
+            message: self.message,
+            mounted: self.session.is_some(),
+            active,
+            lifetime_bytes: self.accounting.total,
+            sample: self
+                .session
+                .as_ref()
+                .and_then(|session| session.sample.clone()),
+            original_path: self
+                .location
+                .as_ref()
+                .map(|redirect| redirect.original_path.clone()),
+            target: self
+                .location
+                .as_ref()
+                .map(|redirect| redirect.target.clone()),
+            memory_limit_bytes: self.memory_limit_bytes,
+            error: self.error.clone(),
+            warning: self.accounting.warning.clone(),
+            shutdown: self.shutdown,
+        }
+    }
 }
 
 fn run(
     store: &Store,
     config: &Config,
     receiver: &Receiver<()>,
-    pending: &Mutex<Command>,
+    mailbox: &Mutex<Mailbox>,
     output: &Mutex<Status>,
 ) {
-    let mut status = Status {
-        message: "Could not start RAM storage".to_owned(),
-        ..Status::default()
+    let mut state = State {
+        message: DisplayStatus::StartFailed,
+        ..State::default()
     };
-    let mut session = None;
-    match initialize(store, &mut status).and_then(|()| start(store, config, &mut status)) {
-        Ok(started) => session = Some(started),
-        Err(error) => status.error = Some(format!("{error:#}")),
+    if let Err(error) = initialize(store, &mut state) {
+        state.error = Some(format!("{error:#}"));
+    } else if let Err(error) = start(store, config, &mut state) {
+        state.error = Some(format!("{error:#}"));
     }
-    publish(output, &status);
+    publish(output, &state);
     loop {
         let disconnected = matches!(
-            receiver.recv_timeout(Duration::from_millis(250)),
+            receiver.recv_timeout(WORKER_POLL_INTERVAL),
             Err(mpsc::RecvTimeoutError::Disconnected)
         );
         let command = if disconnected {
-            Command::Shutdown
+            Some(Command::Shutdown)
         } else {
-            pending.lock().map_or(Command::Shutdown, |mut pending| {
-                std::mem::replace(&mut *pending, Command::Idle)
-            })
+            match mailbox.lock() {
+                Ok(mut mailbox) => mailbox.pending.take(),
+                Err(_) => Some(Command::Shutdown),
+            }
         };
         match command {
-            Command::Shutdown => {
-                status.shutdown = Shutdown::Pending;
-                "Stopping RAM storage…".clone_into(&mut status.message);
-                publish(output, &status);
-                let result = stop(store, &mut session, &mut status);
-                complete_shutdown(&mut status, result);
-                publish(output, &status);
-                if status.shutdown == Shutdown::Complete {
+            Some(Command::Shutdown) => {
+                state.shutdown = Shutdown::Pending;
+                state.message = DisplayStatus::Stopping;
+                publish(output, &state);
+                let report = stop(store, &mut state);
+                complete_shutdown(&mut state, &report);
+                publish(output, &state);
+                if state.shutdown == Shutdown::Complete {
                     break;
                 }
             }
-            Command::Exit => {
-                // Best effort for unexpected teardown or an explicit exit after failure.
-                let _ = stop(store, &mut session, &mut status);
+            Some(Command::Exit) => {
+                let _ = stop(store, &mut state);
                 break;
             }
-            Command::Stop => {
-                status.error = stop(store, &mut session, &mut status)
-                    .err()
-                    .map(|error| format!("{error:#}"));
+            Some(Command::Stop) => {
+                let report = stop(store, &mut state);
+                state.error = if report.is_ok() {
+                    None
+                } else {
+                    Some(report.to_string())
+                };
             }
-            Command::Start(config) => {
+            Some(Command::Start(config)) => {
                 if let Err(error) = config.validate() {
-                    status.error = Some(error.to_string());
-                    publish(output, &status);
+                    state.error = Some(error.to_string());
+                    publish(output, &state);
                     continue;
                 }
-                let result = stop(store, &mut session, &mut status)
-                    .and_then(|()| initialize(store, &mut status))
-                    .and_then(|()| start(store, &config, &mut status));
-                match result {
-                    Ok(started) => {
-                        session = Some(started);
-                        status.error = None;
-                    }
-                    Err(error) => status.error = Some(format!("{error:#}")),
+                let report = stop(store, &mut state);
+                if !report.is_ok() {
+                    state.error = Some(report.to_string());
+                } else if let Err(error) = initialize(store, &mut state) {
+                    state.error = Some(format!("{error:#}"));
+                } else if let Err(error) = start(store, &config, &mut state) {
+                    state.error = Some(format!("{error:#}"));
+                } else {
+                    state.error = None;
                 }
             }
-            Command::Idle => {}
+            None => {}
         }
-        if let Some(running) = &mut session
-            && !running.stopping
-            && let Err(error) = poll(store, running, &mut status)
+        if let Some(session) = &mut state.session
+            && !session.stopping
+            && let Err(error) = poll(store, session, &mut state.accounting, &mut state.message)
         {
+            let report = stop(store, &mut state);
             let mut message = format!("{error:#}");
-            if let Err(cleanup) = stop(store, &mut session, &mut status) {
-                let _ = write!(message, "\nCleanup: {cleanup:#}");
+            if !report.is_ok() {
+                let _ = write!(message, "\nCleanup: {report}");
             }
-            status.error = Some(message);
+            state.error = Some(message);
         }
-        publish(output, &status);
+        publish(output, &state);
     }
 }
 
-fn publish(output: &Mutex<Status>, status: &Status) {
+fn publish(output: &Mutex<Status>, state: &State) {
     if let Ok(mut output) = output.lock() {
-        *output = status.clone();
+        *output = state.snapshot();
     }
 }
 
@@ -268,203 +346,60 @@ pub(crate) fn recover_with(
     Ok(())
 }
 
-fn initialize(store: &Store, status: &mut Status) -> Result<()> {
+fn initialize(store: &Store, state: &mut State) -> Result<()> {
     recover(store)?;
-    // A failed checkpoint is still counted in memory across a restart.
-    if !status.lifetime_dirty {
-        status.lifetime_bytes = store.lifetime()?;
-    }
-    Ok(())
+    state.accounting.load(store)
 }
 
-fn start(store: &Store, config: &Config, status: &mut Status) -> Result<Session> {
+fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {
     config.validate()?;
     let redirect =
         nvidia::plan(config.target()).context("discover NVIDIA temporary files location")?;
-    status.original_path = Some(redirect.original_path.clone());
-    status.target = Some(redirect.target.clone());
+    state.location = Some(redirect.clone());
     store.save_config(config)?;
-    // Readiness acknowledges the same recovery snapshot used by the GUI and journal.
     let helper = Helper::start(config, &redirect).context("mount RAM filesystem")?;
     store
         .save_redirect(&redirect)
         .context("save redirect recovery journal")?;
-    if let Err(error) = nvidia::apply(&redirect) {
-        // Keep the journal until recovery confirms the setting was restored.
-        return Err(error).context("redirect NVIDIA temporary files");
-    }
-    status.memory_limit_bytes = Some(config.limit_bytes());
-    status.mounted = true;
-    "RAM ready · waiting for NVIDIA writes".clone_into(&mut status.message);
+    nvidia::apply(&redirect).context("redirect NVIDIA temporary files")?;
+    state.memory_limit_bytes = Some(config.limit_bytes());
+    state.message = DisplayStatus::Waiting;
     let now = Instant::now();
-    Ok(Session {
+    state.session = Some(Session {
         helper,
         redirect,
-        meter: Meter::new(status.lifetime_bytes),
+        meter: Meter::new(state.accounting.total),
+        sample: None,
         last_sample: now,
         checkpoint: now,
         stopping: false,
-    })
+    });
+    Ok(())
 }
 
-fn poll(store: &Store, session: &mut Session, status: &mut Status) -> Result<()> {
+fn poll(
+    store: &Store,
+    session: &mut Session,
+    accounting: &mut Accounting,
+    message: &mut DisplayStatus,
+) -> Result<()> {
     let now = Instant::now();
     if let Some(sample) = session.helper.sample()? {
-        status.lifetime_bytes = session.meter.observe(&sample, now)?;
+        accounting.observe(&mut session.meter, &sample, now)?;
         session.last_sample = now;
-        status.sample = Some(sample);
+        session.sample = Some(sample);
     }
-    if now.duration_since(session.last_sample) > Duration::from_secs(3) {
+    if now.duration_since(session.last_sample) > TELEMETRY_TIMEOUT {
         anyhow::bail!("RAM helper telemetry is stale");
     }
-    status.active = session.meter.active(now);
-    (if status.active {
-        "Data is being written to RAM"
+    *message = if session.meter.active(now) {
+        DisplayStatus::Writing
     } else {
-        "RAM ready · no writes in the last 2 seconds"
-    })
-    .clone_into(&mut status.message);
-    checkpoint(store, &mut session.checkpoint, status, now);
-    Ok(())
-}
-
-fn checkpoint(store: &Store, last_attempt: &mut Instant, status: &mut Status, now: Instant) {
-    if now.duration_since(*last_attempt) < Duration::from_secs(10) {
-        return;
-    }
-    // Failures are retried at the same bounded cadence without unmounting RAM.
-    *last_attempt = now;
-    match store.save_lifetime(status.lifetime_bytes) {
-        Ok(()) => {
-            status.lifetime_dirty = false;
-            status.warning = None;
-        }
-        Err(error) => {
-            status.lifetime_dirty = true;
-            status.warning = Some(format!(
-                "Lifetime counter could not be saved; RAM recording continues. Retrying in 10 seconds: {error}"
-            ));
-        }
-    }
-}
-
-fn stop(store: &Store, session: &mut Option<Session>, status: &mut Status) -> Result<()> {
-    stop_with(store, session, status, |redirect| {
-        nvidia::restore(redirect).map_err(Into::into)
-    })
-}
-
-fn stop_with(
-    store: &Store,
-    session: &mut Option<Session>,
-    status: &mut Status,
-    restore: impl FnOnce(&Redirect) -> Result<()>,
-) -> Result<()> {
-    let Some(mut running) = session.take() else {
-        let restoration = recover_with(store, restore);
-        let persistence = persist_lifetime(store, status);
-        let result = combine_errors([restoration, persistence]);
-        if result.is_ok() {
-            "Stopped · temporary location restored".clone_into(&mut status.message);
-        }
-        return result;
+        DisplayStatus::Ready
     };
-    // Restore before unmounting; the journal remains if restoration fails.
-    let restoration = restore(&running.redirect).context("restore NVIDIA temporary path; retry restoration or set Temporary files to a persistent drive in Alt+Z");
-    let stopped = running.helper.stop();
-    let exited = stopped.exited;
-    let result = finish_stop(store, &mut running.meter, status, restoration, stopped);
-    if !exited {
-        running.stopping = true;
-        *session = Some(running);
-    }
-    result
-}
-
-fn finish_stop(
-    store: &Store,
-    meter: &mut Meter,
-    status: &mut Status,
-    restoration: Result<()>,
-    stopped: ShutdownReport,
-) -> Result<()> {
-    status.mounted = !stopped.exited;
-    status.active = false;
-    if stopped.exited {
-        status.sample = None;
-    }
-    (if stopped.exited {
-        "Stopped · cleanup needs attention"
-    } else {
-        "RAM helper is still running · retry stopping"
-    })
-    .clone_into(&mut status.message);
-    let accounting = stopped.sample.as_ref().map_or(Ok(()), |sample| {
-        meter
-            .observe(sample, Instant::now())
-            .map(|bytes| {
-                status.lifetime_bytes = bytes;
-            })
-            .context("account final RAM writes")
-    });
-    status.lifetime_dirty = true;
-    let persistence = persist_lifetime(store, status);
-    let journal = if restoration.is_ok() && stopped.exited {
-        store
-            .clear_redirect()
-            .context("clear redirect recovery journal")
-    } else {
-        Ok(())
-    };
-    let result = combine_errors([
-        restoration,
-        stopped.result.context("stop RAM filesystem"),
-        accounting,
-        persistence,
-        journal,
-    ]);
-    if result.is_ok() {
-        "Stopped · temporary location restored".clone_into(&mut status.message);
-    }
-    result
-}
-
-fn persist_lifetime(store: &Store, status: &mut Status) -> Result<()> {
-    if status.lifetime_dirty {
-        store.save_lifetime(status.lifetime_bytes).context(
-            "save lifetime write counter; check application state directory access and retry",
-        )?;
-        status.lifetime_dirty = false;
-        status.warning = None;
-    }
+    accounting.checkpoint(store, &mut session.checkpoint, now);
     Ok(())
-}
-
-fn combine_errors<const N: usize>(results: [Result<()>; N]) -> Result<()> {
-    let mut message = String::new();
-    for error in results.into_iter().filter_map(Result::err) {
-        if !message.is_empty() {
-            message.push('\n');
-        }
-        let _ = write!(message, "{error:#}");
-    }
-    anyhow::ensure!(message.is_empty(), "{message}");
-    Ok(())
-}
-
-fn complete_shutdown(status: &mut Status, result: Result<()>) {
-    match result {
-        Ok(()) => {
-            status.shutdown = Shutdown::Complete;
-            status.error = None;
-        }
-        Err(error) => {
-            status.shutdown = Shutdown::Failed;
-            status.error = Some(format!("Could not finish shutdown: {error:#}"));
-        }
-    }
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/service.rs"]
 mod tests;
