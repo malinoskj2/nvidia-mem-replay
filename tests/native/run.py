@@ -45,7 +45,11 @@ parts += [source(name) for name in ['comparisons.cpp', 'nodes.cpp', 'sectors.cpp
 parts += ['namespace Memfs::Utils {', method('utils.cpp', 'SuffixView PathSuffix('), '}']
 parts += ['namespace Memfs {', method('nodes-compat.cpp', 'NTSTATUS CompatSetFileSizeInternal('),
           method('nodes-compat.cpp', 'NTSTATUS CompatFspFileNodeSetEa('), '}']
-parts += ['namespace Memfs::Interface {', method('filecreate.cpp', 'NTSTATUS Create('),
+parts += ['namespace Memfs::Interface {',
+          method('filecreate.cpp', 'NTSTATUS NormalizeCreateName('),
+          method('filecreate.cpp', 'NTSTATUS InitializeCreateSecurity('),
+          method('filecreate.cpp', 'NTSTATUS InitializeCreateExtra('),
+          method('filecreate.cpp', 'NTSTATUS Create('),
           method('fileinfo.cpp', 'NTSTATUS Rename('),
           method('fileinfo.cpp', 'NTSTATUS SetFileSize('),
           method('io.cpp', 'NTSTATUS Write('), method('io.cpp', 'NTSTATUS Read('), '}']

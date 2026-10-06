@@ -183,44 +183,26 @@ void MemFs::RemoveNode(FileNode& node, const bool reportDeletedSize) {
 	node.Dereference();
 }
 
-NTSTATUS MemFs::RenameNode(FileNode& node, const std::wstring_view& newFileName, bool replaceIfExists) {
-	// WinFsp's COARSE operation guard serializes namespace callbacks. Prepare every
-	// allocation and lock before changing either namespace; commit transfers existing
-	// map references with C++17 node handles, which do not allocate.
-	try {
-		std::unique_lock mapLock(this->fileMapMutex);
-		const auto source = this->fileMap.find(node.fileName);
-		if (source == this->fileMap.end() || source->second != &node) {
-			return STATUS_OBJECT_NAME_NOT_FOUND;
-		}
-		if (node.fileName == L"\\" ||
-			(newFileName.size() > node.fileName.size() &&
-			 Utils::FileNameHasPrefix(newFileName.data(), (int)newFileName.size(), node.fileName.c_str(), (int)node.fileName.size(), this->IsCaseInsensitive()))) {
-			return STATUS_ACCESS_DENIED;
-		}
+namespace {
+// Owns every allocation and node lock needed for a rename. Map iterators remain
+// valid only while the caller holds the namespace lock through preparation/commit.
+class RenamePlan {
+	struct Change {
+		FileNodeMap::iterator entry;
+		std::wstring name;
+	};
+	std::vector<Change> changes;
+	std::vector<FileNodeMap::iterator> replaced;
+	FileNodeMap staged;
+	std::vector<FileNode*> unlinked;
+	std::vector<std::unique_lock<std::shared_mutex>> nodeLocks;
 
-		const auto destination = this->fileMap.find(newFileName);
-		const bool replace = destination != this->fileMap.end() && destination->second != &node;
-		if (replace) {
-			if (!replaceIfExists) {
-				return STATUS_OBJECT_NAME_COLLISION;
-			}
-			if (destination->second->fileInfo.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-				return STATUS_ACCESS_DENIED;
-			}
-		}
-
-		struct Change {
-			FileNodeMap::iterator entry;
-			std::wstring name;
-		};
-		std::vector<Change> changes;
-		std::vector<FileNodeMap::iterator> replaced;
-		FileNodeMap staged(this->fileMap.key_comp());
+	NTSTATUS StageChanges(FileNodeMap& fileMap, FileNodeMap::iterator source,
+		FileNode& node, std::wstring_view newFileName) {
 		const size_t oldLength = node.fileName.size();
-		for (auto iter = source; iter != this->fileMap.end(); ++iter) {
+		for (auto iter = source; iter != fileMap.end(); ++iter) {
 			FileNode* descendant = iter->second;
-			if (!Utils::FileNameHasPrefix(descendant->fileName.c_str(), (int)descendant->fileName.size(), node.fileName.c_str(), (int)oldLength, this->IsCaseInsensitive())) {
+			if (!Utils::FileNameHasPrefix(descendant->fileName.c_str(), (int)descendant->fileName.size(), node.fileName.c_str(), (int)oldLength, fileMap.key_comp().CaseInsensitive)) {
 				break;
 			}
 			const size_t suffixLength = descendant->fileName.size() - oldLength;
@@ -235,23 +217,26 @@ NTSTATUS MemFs::RenameNode(FileNode& node, const std::wstring_view& newFileName,
 			changes.push_back({iter, std::move(name)});
 		}
 
-		if (replace) {
-			replaced.push_back(destination);
-			// Replacing a main file also unlinks all its streams, including streams
-			// absent on the source. Open destination handles keep their own references.
-			if (destination->second->IsMainNode()) {
-				const std::wstring& destinationName = destination->second->fileName;
-				for (auto iter = std::next(destination); iter != this->fileMap.end(); ++iter) {
-					const std::wstring& name = iter->second->fileName;
-					if (name.size() <= destinationName.size() || name[destinationName.size()] != L':' ||
-						!Utils::FileNameHasPrefix(name.c_str(), (int)name.size(), destinationName.c_str(), (int)destinationName.size(), this->IsCaseInsensitive())) {
-						break;
-					}
-					replaced.push_back(iter);
-				}
-			}
-		}
+		return STATUS_SUCCESS;
+	}
 
+	void StageReplacement(FileNodeMap& fileMap, FileNodeMap::iterator destination) {
+		replaced.push_back(destination);
+		// Replacing a main file also unlinks all its streams, including streams
+		// absent on the source. Open destination handles keep their own references.
+		if (!destination->second->IsMainNode()) return;
+		const std::wstring& destinationName = destination->second->fileName;
+		for (auto iter = std::next(destination); iter != fileMap.end(); ++iter) {
+			const std::wstring& name = iter->second->fileName;
+			if (name.size() <= destinationName.size() || name[destinationName.size()] != L':' ||
+				!Utils::FileNameHasPrefix(name.c_str(), (int)name.size(), destinationName.c_str(), (int)destinationName.size(), fileMap.key_comp().CaseInsensitive)) {
+				break;
+			}
+			replaced.push_back(iter);
+		}
+	}
+
+	NTSTATUS CheckCollisions(const FileNodeMap& fileMap) const {
 		std::unordered_set<FileNode*> removedNodes;
 		removedNodes.reserve(changes.size() + replaced.size());
 		for (const auto& change : changes) removedNodes.insert(change.entry->second);
@@ -261,36 +246,97 @@ NTSTATUS MemFs::RenameNode(FileNode& node, const std::wstring_view& newFileName,
 			if (!removedNodes.insert(entry->second).second) return STATUS_ACCESS_DENIED;
 		}
 		for (const auto& [name, descendant] : staged) {
-			const auto existing = this->fileMap.find(name);
-			if (existing == this->fileMap.end()) continue;
+			const auto existing = fileMap.find(name);
+			if (existing == fileMap.end()) continue;
 			if (!removedNodes.contains(existing->second)) return STATUS_OBJECT_NAME_COLLISION;
 		}
 
-		std::vector<FileNode*> unlinked;
+		return STATUS_SUCCESS;
+	}
+
+	void LockNodes() {
 		unlinked.reserve(replaced.size());
 		for (const auto& entry : replaced) unlinked.push_back(entry->second);
-		std::vector<std::unique_lock<std::shared_mutex>> nodeLocks;
 		nodeLocks.reserve(changes.size());
 		for (const auto& change : changes) nodeLocks.emplace_back(change.entry->second->nodeMutex);
+	}
+
+public:
+	explicit RenamePlan(const FileNodeMap& fileMap) : staged(fileMap.key_comp()) {}
+
+	NTSTATUS Prepare(FileNodeMap& fileMap, FileNode& node,
+		std::wstring_view newFileName, bool replaceIfExists) {
+		const auto source = fileMap.find(node.fileName);
+		if (source == fileMap.end() || source->second != &node) {
+			return STATUS_OBJECT_NAME_NOT_FOUND;
+		}
+		if (node.fileName == L"\\" ||
+			(newFileName.size() > node.fileName.size() &&
+			 Utils::FileNameHasPrefix(newFileName.data(), (int)newFileName.size(), node.fileName.c_str(), (int)node.fileName.size(), fileMap.key_comp().CaseInsensitive))) {
+			return STATUS_ACCESS_DENIED;
+		}
+
+		const auto destination = fileMap.find(newFileName);
+		const bool replace = destination != fileMap.end() && destination->second != &node;
+		if (replace) {
+			if (!replaceIfExists) {
+				return STATUS_OBJECT_NAME_COLLISION;
+			}
+			if (destination->second->fileInfo.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+				return STATUS_ACCESS_DENIED;
+			}
+		}
+
+		const NTSTATUS stageStatus = StageChanges(fileMap, source, node, newFileName);
+		if (!NT_SUCCESS(stageStatus)) return stageStatus;
+		if (replace) StageReplacement(fileMap, destination);
+		const NTSTATUS collisionStatus = CheckCollisions(fileMap);
+		if (!NT_SUCCESS(collisionStatus)) return collisionStatus;
+		LockNodes();
+		return STATUS_SUCCESS;
+	}
+
+	// No allocations: transfer the staged map nodes and existing map references.
+	void Commit(FileNodeMap& fileMap) {
+		for (const auto& entry : replaced) fileMap.erase(entry);
+		for (auto& change : changes) {
+			change.entry->second->fileName.swap(change.name);
+			fileMap.erase(change.entry);
+		}
+		while (!staged.empty()) fileMap.insert(staged.extract(staged.begin()));
+	}
+
+	void UnlockNodes() { nodeLocks.clear(); }
+
+	void ReleaseReplacedNodes() {
+		for (FileNode* replacedNode : unlinked) replacedNode->Dereference();
+	}
+};
+}
+
+NTSTATUS MemFs::RenameNode(FileNode& node, const std::wstring_view& newFileName, bool replaceIfExists) {
+	// WinFsp's COARSE operation guard serializes namespace callbacks. Prepare every
+	// allocation and lock before changing either namespace; commit transfers existing
+	// map references with C++17 node handles, which do not allocate.
+	try {
+		std::unique_lock mapLock(this->fileMapMutex);
+		RenamePlan plan(this->fileMap);
+		const NTSTATUS status = plan.Prepare(this->fileMap, node, newFileName, replaceIfExists);
+		if (!NT_SUCCESS(status)) return status;
 		const auto [parentStatus, oldParent] = this->FindParent(node.fileName);
 
 		{
 #if MEMFS_DIAGNOSTICS
 			const WriterGuard writerGuard(*this);
 #endif
-			for (const auto& entry : replaced) this->fileMap.erase(entry);
-			for (auto& change : changes) {
-				change.entry->second->fileName.swap(change.name);
-				this->fileMap.erase(change.entry);
-			}
-			while (!staged.empty()) this->fileMap.insert(staged.extract(staged.begin()));
+			plan.Commit(this->fileMap);
 #if MEMFS_DIAGNOSTICS
 			this->diagMapEpoch.fetch_add(1, std::memory_order_relaxed);
 #endif
 		}
-		nodeLocks.clear();
+		plan.UnlockNodes();
 		mapLock.unlock();
-		for (FileNode* replacedNode : unlinked) replacedNode->Dereference();
+		plan.ReleaseReplacedNodes();
 
 		// Timestamp updates are advisory once the namespace transaction has committed.
 		try {

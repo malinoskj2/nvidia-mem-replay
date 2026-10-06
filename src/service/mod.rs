@@ -163,9 +163,11 @@ impl Worker {
     pub(crate) fn stop(&self) {
         self.control.request(Command::Stop);
     }
+
     pub(crate) fn shutdown(&self) {
         self.control.request(Command::Shutdown);
     }
+
     pub(crate) fn exit(&self) {
         self.control.request(Command::Exit);
     }
@@ -263,48 +265,10 @@ fn run(
                 Err(_) => Some(Command::Shutdown),
             }
         };
-        match command {
-            Some(Command::Shutdown) => {
-                state.shutdown = Shutdown::Pending;
-                state.message = DisplayStatus::Stopping;
-                publish(output, &state);
-                let report = stop(store, &mut state);
-                complete_shutdown(&mut state, &report);
-                publish(output, &state);
-                if state.shutdown == Shutdown::Complete {
-                    break;
-                }
-            }
-            Some(Command::Exit) => {
-                let _ = stop(store, &mut state);
-                break;
-            }
-            Some(Command::Stop) => {
-                let report = stop(store, &mut state);
-                state.error = if report.is_ok() {
-                    None
-                } else {
-                    Some(report.to_string())
-                };
-            }
-            Some(Command::Start(config)) => {
-                if let Err(error) = config.validate() {
-                    state.error = Some(error.to_string());
-                    publish(output, &state);
-                    continue;
-                }
-                let report = stop(store, &mut state);
-                if !report.is_ok() {
-                    state.error = Some(report.to_string());
-                } else if let Err(error) = initialize(store, &mut state) {
-                    state.error = Some(format!("{error:#}"));
-                } else if let Err(error) = start(store, &config, &mut state) {
-                    state.error = Some(format!("{error:#}"));
-                } else {
-                    state.error = None;
-                }
-            }
-            None => {}
+        match handle_command(store, command, &mut state, output) {
+            CommandOutcome::Poll => {}
+            CommandOutcome::Continue => continue,
+            CommandOutcome::Exit => break,
         }
         if let Some(session) = &mut state.session
             && !session.stopping
@@ -318,6 +282,68 @@ fn run(
             state.error = Some(message);
         }
         publish(output, &state);
+    }
+}
+
+enum CommandOutcome {
+    Poll,
+    Continue,
+    Exit,
+}
+
+fn handle_command(
+    store: &Store,
+    command: Option<Command>,
+    state: &mut State,
+    output: &Mutex<Status>,
+) -> CommandOutcome {
+    match command {
+        Some(Command::Shutdown) => {
+            state.shutdown = Shutdown::Pending;
+            state.message = DisplayStatus::Stopping;
+            publish(output, state);
+            let report = stop(store, state);
+            complete_shutdown(state, &report);
+            publish(output, state);
+            if state.shutdown == Shutdown::Complete {
+                return CommandOutcome::Exit;
+            }
+        }
+        Some(Command::Exit) => {
+            let _ = stop(store, state);
+            return CommandOutcome::Exit;
+        }
+        Some(Command::Stop) => {
+            let report = stop(store, state);
+            state.error = if report.is_ok() {
+                None
+            } else {
+                Some(report.to_string())
+            };
+        }
+        Some(Command::Start(config)) => {
+            if let Err(error) = config.validate() {
+                state.error = Some(error.to_string());
+                publish(output, state);
+                return CommandOutcome::Continue;
+            }
+            restart(store, &config, state);
+        }
+        None => {}
+    }
+    CommandOutcome::Poll
+}
+
+fn restart(store: &Store, config: &Config, state: &mut State) {
+    let report = stop(store, state);
+    if !report.is_ok() {
+        state.error = Some(report.to_string());
+    } else if let Err(error) = initialize(store, state) {
+        state.error = Some(format!("{error:#}"));
+    } else if let Err(error) = start(store, config, state) {
+        state.error = Some(format!("{error:#}"));
+    } else {
+        state.error = None;
     }
 }
 

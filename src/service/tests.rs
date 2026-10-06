@@ -290,3 +290,83 @@ fn poll_keeps_live_helper_and_session_when_lifetime_checkpoint_fails() {
     assert!(running.helper.sample().is_ok());
     assert!(running.helper.stop().exited);
 }
+
+#[test]
+fn invalid_restart_publishes_error_without_stopping_or_polling() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::at(directory.path().to_owned()).unwrap();
+    let mut state = State {
+        message: DisplayStatus::Ready,
+        ..State::default()
+    };
+    state.accounting.total = 42;
+    state.accounting.dirty = true;
+    let output = Mutex::new(Status::default());
+    let config = Config {
+        drive: 'C',
+        ..Config::default()
+    };
+
+    let outcome = handle_command(&store, Some(Command::Start(config)), &mut state, &output);
+
+    assert!(matches!(outcome, CommandOutcome::Continue));
+    assert_eq!(state.message, DisplayStatus::Ready);
+    assert!(state.accounting.dirty);
+    assert_eq!(store.lifetime().unwrap(), 0);
+    let published = output.lock().unwrap();
+    assert_eq!(published.message, DisplayStatus::Ready);
+    assert_eq!(published.lifetime_bytes, 42);
+    assert_eq!(published.error, state.error);
+    assert!(published.error.as_ref().unwrap().contains("drive letter"));
+}
+
+#[test]
+fn shutdown_command_stays_running_after_cleanup_failure_and_exits_on_retry() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::at(directory.path().to_owned()).unwrap();
+    std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
+    let mut state = State::default();
+    state.accounting.total = 42;
+    state.accounting.dirty = true;
+    let output = Mutex::new(Status::default());
+
+    let outcome = handle_command(&store, Some(Command::Shutdown), &mut state, &output);
+
+    assert!(matches!(outcome, CommandOutcome::Poll));
+    assert!(output.lock().unwrap().shutdown == Shutdown::Failed);
+    assert!(state.error.as_ref().unwrap().contains("save lifetime"));
+    std::fs::remove_dir(directory.path().join("lifetime.pending")).unwrap();
+
+    let outcome = handle_command(&store, Some(Command::Shutdown), &mut state, &output);
+
+    assert!(matches!(outcome, CommandOutcome::Exit));
+    assert!(output.lock().unwrap().shutdown == Shutdown::Complete);
+    assert!(state.error.is_none());
+    assert_eq!(store.lifetime().unwrap(), 42);
+}
+
+#[test]
+fn forced_exit_attempts_cleanup_without_waiting_for_success() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::at(directory.path().to_owned()).unwrap();
+    let mut state = State::default();
+    state.accounting.total = 42;
+    state.accounting.dirty = true;
+    let output = Mutex::new(Status::default());
+
+    let outcome = handle_command(&store, Some(Command::Exit), &mut state, &output);
+
+    assert!(matches!(outcome, CommandOutcome::Exit));
+    assert_eq!(store.lifetime().unwrap(), 42);
+    assert_eq!(output.lock().unwrap().lifetime_bytes, 0);
+
+    state.accounting.total = 50;
+    state.accounting.dirty = true;
+    std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
+
+    let outcome = handle_command(&store, Some(Command::Exit), &mut state, &output);
+
+    assert!(matches!(outcome, CommandOutcome::Exit));
+    assert!(state.accounting.dirty);
+    assert_eq!(store.lifetime().unwrap(), 42);
+}

@@ -5,6 +5,73 @@
 #include "utils.h"
 
 namespace Memfs::Interface {
+	namespace {
+		NTSTATUS NormalizeCreateName(const MemFs& memfs, const FileNode& parentNode,
+		                             PWSTR requestedName, std::wstring& fileName) {
+			if (!memfs.IsCaseInsensitive()) {
+				fileName = requestedName;
+				return STATUS_SUCCESS;
+			}
+
+			const Utils::SuffixView pathView = Utils::PathSuffix(requestedName);
+			assert(0 == Utils::FileNameCompare(pathView.RemainPrefix.data(), pathView.RemainPrefix.length(), parentNode.fileName.c_str(), parentNode.fileName.length(), true));
+
+			const size_t remainLength = parentNode.fileName.length();
+			const size_t bSlashLength = 1 < remainLength;
+			const size_t suffixLength = pathView.Suffix.length();
+			if (MEMFS_MAX_PATH <= remainLength + bSlashLength + suffixLength) {
+				return STATUS_OBJECT_NAME_INVALID;
+			}
+
+			fileName = parentNode.fileName + (bSlashLength ? L"\\" : L"") + std::wstring(pathView.Suffix);
+
+			return STATUS_SUCCESS;
+		}
+
+		NTSTATUS InitializeCreateSecurity(FileNode& fileNode, PSECURITY_DESCRIPTOR securityDescriptor) {
+			if (nullptr == securityDescriptor) {
+				return STATUS_SUCCESS;
+			}
+
+			try {
+				const size_t securityDescriptorLength = GetSecurityDescriptorLength(securityDescriptor);
+				fileNode.fileSecurity = DynamicStruct<SECURITY_DESCRIPTOR>(securityDescriptorLength);
+
+				memcpy_s(fileNode.fileSecurity.Struct(), fileNode.fileSecurity.ByteSize(), securityDescriptor, securityDescriptorLength);
+			} catch (...) {
+				// The caller owns this unpublished node; RAII releases it on failure.
+				return STATUS_INSUFFICIENT_RESOURCES;
+			}
+
+			return STATUS_SUCCESS;
+		}
+
+		NTSTATUS InitializeCreateExtra(FSP_FILE_SYSTEM* fileSystem, FileNode& fileNode,
+		                               PVOID extraBuffer, ULONG extraLength, BOOLEAN extraBufferIsReparsePoint) {
+			if (nullptr == extraBuffer) {
+				return STATUS_SUCCESS;
+			}
+
+			if (!extraBufferIsReparsePoint) {
+				return FspFileSystemEnumerateEa(fileSystem, CompatFspFileNodeSetEa, &fileNode,
+				                                (PFILE_FULL_EA_INFORMATION)extraBuffer, extraLength);
+			}
+
+			try {
+				fileNode.reparseData = DynamicStruct<byte>(extraLength);
+
+				fileNode.fileInfo.FileAttributes |= FILE_ATTRIBUTE_REPARSE_POINT;
+				fileNode.fileInfo.ReparseTag = *(PULONG)extraBuffer;
+
+				memcpy_s(fileNode.reparseData.Struct(), fileNode.reparseData.ByteSize(), extraBuffer, extraLength);
+			} catch (...) {
+				return STATUS_INSUFFICIENT_RESOURCES;
+			}
+
+			return STATUS_SUCCESS;
+		}
+	}
+
 	NTSTATUS Create(FSP_FILE_SYSTEM* fileSystem,
 	                PWSTR fileName0, UINT32 createOptions, UINT32 grantedAccess,
 	                UINT32 fileAttributes, PSECURITY_DESCRIPTOR securityDescriptor, UINT64 allocationSize,
@@ -44,20 +111,9 @@ namespace Memfs::Interface {
 
 		try {
 			std::wstring fileName;
-			if (memfs->IsCaseInsensitive()) {
-				const Utils::SuffixView pathView = Utils::PathSuffix(fileName0);
-				assert(0 == Utils::FileNameCompare(pathView.RemainPrefix.data(), pathView.RemainPrefix.length(), parentNode.fileName.c_str(), parentNode.fileName.length(), true));
-
-				const size_t remainLength = parentNode.fileName.length();
-				const size_t bSlashLength = 1 < remainLength;
-				const size_t suffixLength = pathView.Suffix.length();
-				if (MEMFS_MAX_PATH <= remainLength + bSlashLength + suffixLength) {
-					return STATUS_OBJECT_NAME_INVALID;
-				}
-
-				fileName = parentNode.fileName + (bSlashLength ? L"\\" : L"") + std::wstring(pathView.Suffix);
-			} else {
-				fileName = fileName0;
+			result = NormalizeCreateName(*memfs, parentNode, fileName0, fileName);
+			if (!NT_SUCCESS(result)) {
+				return result;
 			}
 
 			FileNode fileNode(fileName);
@@ -69,41 +125,14 @@ namespace Memfs::Interface {
 
 			fileNode.fileInfo.FileAttributes = (fileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? fileAttributes : fileAttributes | FILE_ATTRIBUTE_ARCHIVE;
 
-			if (securityDescriptor != nullptr) {
-				try {
-					const size_t securityDescriptorLength = GetSecurityDescriptorLength(securityDescriptor);
-					fileNode.fileSecurity = DynamicStruct<SECURITY_DESCRIPTOR>(securityDescriptorLength);
-
-					memcpy_s(fileNode.fileSecurity.Struct(), fileNode.fileSecurity.ByteSize(), securityDescriptor, securityDescriptorLength);
-				} catch (...) {
-					// A5: fileNode is a local that never entered the map — RemoveNode would only
-					// hit a foreign entry of the same name. RAII releases it (and its sectors).
-					return STATUS_INSUFFICIENT_RESOURCES;
-				}
+			result = InitializeCreateSecurity(fileNode, securityDescriptor);
+			if (!NT_SUCCESS(result)) {
+				return result;
 			}
 
-			if (nullptr != extraBuffer) {
-				if (!extraBufferIsReparsePoint) {
-					result = FspFileSystemEnumerateEa(fileSystem, CompatFspFileNodeSetEa, &fileNode,
-					                                  (PFILE_FULL_EA_INFORMATION)extraBuffer, extraLength);
-
-					if (!NT_SUCCESS(result)) {
-						return result;
-					}
-				}
-
-				if (extraBufferIsReparsePoint) {
-					try {
-						fileNode.reparseData = DynamicStruct<byte>(extraLength);
-
-						fileNode.fileInfo.FileAttributes |= FILE_ATTRIBUTE_REPARSE_POINT;
-						fileNode.fileInfo.ReparseTag = *(PULONG)extraBuffer;
-
-						memcpy_s(fileNode.reparseData.Struct(), fileNode.reparseData.ByteSize(), extraBuffer, extraLength);
-					} catch (...) {
-						return STATUS_INSUFFICIENT_RESOURCES;
-					}
-				}
+			result = InitializeCreateExtra(fileSystem, fileNode, extraBuffer, extraLength, extraBufferIsReparsePoint);
+			if (!NT_SUCCESS(result)) {
+				return result;
 			}
 
 			fileNode.fileInfo.AllocationSize = allocationSize;
