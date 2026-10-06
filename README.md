@@ -7,7 +7,7 @@ activity, lifetime GB and allocated buffer MB. Closing hides it to the tray.
 
 ## Install and use
 
-Run `dist/replay-in-ram-setup-x64.exe`. It includes the official signed WinFsp
+Run `dist/nvidia-capture-in-ram-x64.exe`. It includes the official signed WinFsp
 2.1.25156 installer and the bundled `memefs-x64.exe`; no separate downloads are
 needed. Driver installation requires administrator access and can require a
 reboot. Launch **Replay in RAM** from the Start menu as the same ordinary Windows
@@ -164,7 +164,7 @@ Release notes include a verification command tied to the exact build commit.
 For a repository-level check, replace `OWNER/REPO` below with the GitHub repository:
 
 ```sh
-gh attestation verify replay-in-ram-setup-x64.exe --repo OWNER/REPO --signer-workflow OWNER/REPO/.github/workflows/check.yml
+gh attestation verify nvidia-capture-in-ram-x64.exe --repo OWNER/REPO --signer-workflow OWNER/REPO/.github/workflows/check.yml
 ```
 
 Attestations establish GitHub Actions build provenance; they do not establish

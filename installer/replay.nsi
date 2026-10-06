@@ -3,7 +3,7 @@ Unicode true
 !include "x64.nsh"
 !include "FileFunc.nsh"
 Name "Replay in RAM"
-OutFile "../dist/replay-in-ram-setup-x64.exe"
+OutFile "../dist/nvidia-capture-in-ram-x64.exe"
 InstallDir "$PROGRAMFILES64\Replay in RAM"
 RequestExecutionLevel admin
 SetCompressor /SOLID lzma

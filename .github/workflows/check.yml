@@ -36,7 +36,7 @@ jobs:
         run: |
           New-Item -ItemType Directory release | Out-Null
           Compress-Archive -Path dist/* -DestinationPath release/replay-in-ram-windows-x64.zip
-          Copy-Item dist/replay-in-ram-setup-x64.exe release/
+          Copy-Item dist/nvidia-capture-in-ram-x64.exe release/
 
           Get-ChildItem release -File | Sort-Object Name | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
