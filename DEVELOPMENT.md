@@ -40,7 +40,10 @@ through the NVIDIA overlay.
 RAM storage on top of the [WinFsp](https://github.com/winfsp/winfsp) Windows driver.
 The GUI owns a Rust supervisor subprocess, which owns the native helper. Both
 helpers run without a console window. The supervisor has a longer shutdown
-deadline than the native helper; forced termination is reported as an error. See [vendor/UPSTREAM.md](vendor/UPSTREAM.md)
+deadline than the native helper; forced termination is reported as an error.
+Unexpected or unsuccessful helper exits include their status and available
+stderr diagnostics. Each helper retains at most 8 KiB while draining additional output, and
+reports when the captured text was truncated. See [vendor/UPSTREAM.md](vendor/UPSTREAM.md)
 for the pinned source and local adapter changes.
 
 - File data is allocated on demand in 64 KiB sectors. The byte ceiling is passed

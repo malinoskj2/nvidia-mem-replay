@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 use thiserror::Error;
 
 pub(crate) const TELEMETRY_PROTOCOL_VERSION: u32 = 1;
@@ -17,14 +20,14 @@ pub(crate) struct Sample {
     pub(crate) available_bytes: u64,
 }
 
-pub(crate) fn decode_sample(frame: &[u8]) -> Result<Sample, String> {
+pub(crate) fn decode_sample(frame: &[u8]) -> Result<Sample, TelemetryError> {
     if frame.len() > MAX_TELEMETRY_FRAME_BYTES || !frame.ends_with(b"\n") {
-        return Err("invalid or oversized helper telemetry".to_owned());
+        return Err(TelemetryError::Frame);
     }
 
-    let sample: Sample = serde_json::from_slice(frame).map_err(|error| error.to_string())?;
+    let sample: Sample = serde_json::from_slice(frame)?;
     if sample.version != TELEMETRY_PROTOCOL_VERSION {
-        return Err(format!("unsupported protocol version {}", sample.version));
+        return Err(TelemetryError::Version(sample.version));
     }
 
     Ok(sample)
@@ -32,6 +35,12 @@ pub(crate) fn decode_sample(frame: &[u8]) -> Result<Sample, String> {
 
 #[derive(Debug, Error)]
 pub(crate) enum TelemetryError {
+    #[error("invalid or oversized helper telemetry")]
+    Frame,
+    #[error("invalid helper telemetry JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("helper telemetry I/O: {0}")]
+    Io(#[from] io::Error),
     #[error("unsupported helper telemetry version {0}; rebuild the bundled helper")]
     Version(u32),
     #[error("helper write counter decreased within a session")]

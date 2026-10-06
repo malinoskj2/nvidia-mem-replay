@@ -11,7 +11,7 @@ fn sample(bytes: u64) -> Sample {
 }
 
 #[test]
-fn cumulative_writes_survive_overwrites_deletion_and_dropped_samples() {
+fn cumulative_counters_include_skipped_samples_and_track_recent_activity() {
     let now = Instant::now();
     let mut meter = Meter::new(8_000);
 
@@ -58,17 +58,17 @@ fn rejects_malformed_and_incomplete_samples() {
     for frame in [
         b"invalid JSON\n".as_slice(),
         b"{\"version\":1}\n".as_slice(),
-        b"{\"version\":1".as_slice(),
+        b"{\"version\":1\n".as_slice(),
     ] {
-        assert!(decode_sample(frame).is_err());
+        assert!(matches!(decode_sample(frame), Err(TelemetryError::Json(_))));
     }
 
     let complete_json = serde_json::to_vec(&sample(0)).unwrap();
 
-    assert_eq!(
-        decode_sample(&complete_json).unwrap_err(),
-        "invalid or oversized helper telemetry"
-    );
+    assert!(matches!(
+        decode_sample(&complete_json),
+        Err(TelemetryError::Frame)
+    ));
 }
 
 #[test]
@@ -77,10 +77,7 @@ fn rejects_oversized_sample_frames() {
     frame.resize(MAX_TELEMETRY_FRAME_BYTES, b' ');
     frame.push(b'\n');
 
-    assert_eq!(
-        decode_sample(&frame).unwrap_err(),
-        "invalid or oversized helper telemetry"
-    );
+    assert!(matches!(decode_sample(&frame), Err(TelemetryError::Frame)));
 }
 
 #[test]
@@ -90,8 +87,8 @@ fn rejects_unsupported_sample_protocol() {
     let mut frame = serde_json::to_vec(&unsupported).unwrap();
     frame.push(b'\n');
 
-    assert_eq!(
-        decode_sample(&frame).unwrap_err(),
-        format!("unsupported protocol version {}", unsupported.version)
-    );
+    assert!(matches!(
+        decode_sample(&frame),
+        Err(TelemetryError::Version(version)) if version == unsupported.version
+    ));
 }

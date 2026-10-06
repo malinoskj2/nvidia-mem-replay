@@ -2,7 +2,9 @@ use crate::{
     config::Config,
     filesystem::MAX_RECOVERY_SNAPSHOT_BYTES,
     sys::nvidia::Redirect,
-    telemetry::{MAX_TELEMETRY_FRAME_BYTES, Sample, TELEMETRY_TIMEOUT, decode_sample},
+    telemetry::{
+        MAX_TELEMETRY_FRAME_BYTES, Sample, TELEMETRY_TIMEOUT, TelemetryError, decode_sample,
+    },
 };
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
@@ -13,6 +15,9 @@ use std::{
 };
 use thiserror::Error;
 
+mod diagnostics;
+use diagnostics::Diagnostics;
+
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -21,7 +26,6 @@ const FORCED_TERMINATION_TIMEOUT: Duration = Duration::from_secs(1);
 const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const MEMEFS_EXECUTABLE: &str = "memefs-x64.exe";
 const STOP_COMMAND: &[u8] = b"stop\n";
-const TELEMETRY_LOCK_FAILED: &str = "telemetry lock failed";
 
 #[derive(Debug, Error)]
 pub(crate) enum HelperError {
@@ -29,14 +33,10 @@ pub(crate) enum HelperError {
     Io(#[from] io::Error),
     #[error("drive {0} is already in use; choose another drive letter")]
     Occupied(String),
-    #[error(
-        "RAM filesystem did not become ready within 15 seconds; run the installer to install WinFsp 2.1"
-    )]
+    #[error("RAM filesystem did not become ready within 15 seconds")]
     Timeout,
-    #[error(
-        "RAM filesystem stopped unexpectedly; run the bundled installer to install or repair WinFsp 2.1, and restart Windows if requested"
-    )]
-    Exited,
+    #[error("RAM filesystem stopped unexpectedly with {0}")]
+    Exited(ExitStatus),
     #[error("RAM filesystem helper exited with {0}")]
     FailedExit(ExitStatus),
     #[error("RAM filesystem helper exceeded its shutdown deadline and was forcibly terminated")]
@@ -48,13 +48,25 @@ pub(crate) enum HelperError {
     #[error("recovery snapshot exceeds 64 KB")]
     SnapshotOversized,
     #[error("helper telemetry: {0}")]
-    Telemetry(String),
+    Telemetry(#[source] Arc<TelemetryError>),
+    #[error("telemetry lock failed")]
+    TelemetryLock,
+    #[error("helper stopped publishing telemetry")]
+    TelemetryStale,
+    #[error("telemetry reader thread failed")]
+    TelemetryReader,
+    #[error("{error}{diagnostics}")]
+    Diagnostics {
+        #[source]
+        error: Box<Self>,
+        diagnostics: String,
+    },
 }
 
 #[derive(Default)]
 struct Inbox {
     latest: Option<(Sample, Instant)>,
-    error: Option<String>,
+    error: Option<Arc<TelemetryError>>,
 }
 
 pub(crate) struct ShutdownReport {
@@ -68,6 +80,7 @@ pub(crate) struct Helper {
     input: Option<ChildStdin>,
     reader: Option<JoinHandle<()>>,
     inbox: Arc<Mutex<Inbox>>,
+    diagnostics: Diagnostics,
     shutdown_timeout: Duration,
 }
 
@@ -88,7 +101,7 @@ impl Helper {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -112,7 +125,7 @@ impl Helper {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .creation_flags(0x0800_0000);
 
         Self::wait_ready(command, config, None)
@@ -132,22 +145,31 @@ impl Helper {
         }
 
         let mut helper = Self::from_child(command.spawn()?)?;
+        if let Err(error) = helper.await_ready(config, snapshot.as_deref()) {
+            let _ = helper.stop();
+            return Err(helper.diagnostics.attach(error));
+        }
+
+        Ok(helper)
+    }
+
+    fn await_ready(&mut self, config: &Config, snapshot: Option<&[u8]>) -> Result<(), HelperError> {
         if let Some(snapshot) = snapshot {
             // The first telemetry frame acknowledges receipt of this exact snapshot.
-            helper.shutdown_timeout = RECOVERY_SHUTDOWN_TIMEOUT;
-            let input = helper
+            self.shutdown_timeout = RECOVERY_SHUTDOWN_TIMEOUT;
+            let input = self
                 .input
                 .as_mut()
                 .ok_or_else(|| io::Error::other("missing helper stdin"))?;
-            input.write_all(&snapshot)?;
+            input.write_all(snapshot)?;
             input.write_all(b"\n")?;
         }
 
         let deadline = Instant::now() + READY_TIMEOUT;
         loop {
-            if helper.sample()?.is_some() {
+            if self.sample()?.is_some() {
                 std::fs::create_dir_all(config.target())?;
-                return Ok(helper);
+                return Ok(());
             }
             if Instant::now() >= deadline {
                 return Err(HelperError::Timeout);
@@ -174,48 +196,48 @@ impl Helper {
                 let parsed = match result {
                     Ok(0) => break,
                     Ok(_) => decode_sample(&line),
-                    Err(error) => Err(error.to_string()),
+                    Err(error) => Err(TelemetryError::Io(error)),
                 };
 
                 let Ok(mut inbox) = output.lock() else { break };
                 match parsed {
                     Ok(sample) => inbox.latest = Some((sample, Instant::now())),
                     Err(error) => {
-                        inbox.error = Some(error);
+                        inbox.error = Some(Arc::new(error));
                         break;
                     }
                 }
             }
         });
+        let diagnostics = Diagnostics::new(child.stderr.take());
 
         Ok(Self {
             input: child.stdin.take(),
             child,
             reader: Some(reader),
             inbox,
+            diagnostics,
             shutdown_timeout: SHUTDOWN_TIMEOUT,
         })
     }
 
     pub(crate) fn sample(&mut self) -> Result<Option<Sample>, HelperError> {
-        let inbox = self
-            .inbox
-            .lock()
-            .map_err(|_| HelperError::Telemetry(TELEMETRY_LOCK_FAILED.to_owned()))?;
-        if let Some(error) = &inbox.error {
-            return Err(HelperError::Telemetry(error.clone()));
-        }
-        if self.child.try_wait()?.is_some() {
-            return Err(HelperError::Exited);
+        if let Some(status) = self.child.try_wait()? {
+            self.join_readers()?;
+            return Err(self.diagnostics.attach(HelperError::Exited(status)));
         }
 
+        let inbox = self.inbox.lock().map_err(|_| HelperError::TelemetryLock)?;
+        if let Some(error) = &inbox.error {
+            return Err(self
+                .diagnostics
+                .attach(HelperError::Telemetry(Arc::clone(error))));
+        }
         let Some((sample, observed)) = &inbox.latest else {
             return Ok(None);
         };
         if observed.elapsed() > TELEMETRY_TIMEOUT {
-            return Err(HelperError::Telemetry(
-                "helper stopped publishing telemetry".to_owned(),
-            ));
+            return Err(self.diagnostics.attach(HelperError::TelemetryStale));
         }
 
         Ok(Some(sample.clone()))
@@ -233,10 +255,7 @@ impl Helper {
                 };
                 (sample, result)
             }
-            Err(_) => (
-                None,
-                Err(HelperError::Telemetry(TELEMETRY_LOCK_FAILED.to_owned())),
-            ),
+            Err(_) => (None, Err(HelperError::TelemetryLock)),
         };
 
         // A process failure takes precedence, while the last sample is always retained.
@@ -247,7 +266,7 @@ impl Helper {
 
         ShutdownReport {
             sample,
-            result,
+            result: result.map_err(|error| self.diagnostics.attach(error)),
             exited,
         }
     }
@@ -274,11 +293,7 @@ impl Helper {
             thread::sleep(SHUTDOWN_POLL_INTERVAL);
         };
 
-        if let Some(reader) = self.reader.take() {
-            reader
-                .join()
-                .map_err(|_| HelperError::Telemetry("reader thread failed".to_owned()))?;
-        }
+        self.join_readers()?;
 
         if forced {
             return Err(HelperError::ForcedTermination);
@@ -288,6 +303,16 @@ impl Helper {
         }
 
         Ok(())
+    }
+
+    fn join_readers(&mut self) -> Result<(), HelperError> {
+        let telemetry = self
+            .reader
+            .take()
+            .map(|reader| reader.join().map_err(|_| HelperError::TelemetryReader))
+            .transpose();
+        self.diagnostics.finish();
+        telemetry.map(|_| ())
     }
 }
 

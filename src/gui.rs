@@ -12,14 +12,20 @@ mod text;
 
 const DRIVE_SELECTOR_ID: &str = "drive";
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lifecycle {
+    Running,
+    ShuttingDown,
+    ExitReady,
+}
+
 pub(crate) struct App {
     tray: Option<Tray>,
     tray_error: Option<String>,
     worker: Worker,
     config: Config,
     settings: bool,
-    quitting: bool,
-    exit_ready: bool,
+    lifecycle: Lifecycle,
 }
 
 impl App {
@@ -36,8 +42,7 @@ impl App {
             worker,
             config,
             settings: false,
-            quitting: false,
-            exit_ready: false,
+            lifecycle: Lifecycle::Running,
         }
     }
 
@@ -81,7 +86,7 @@ impl App {
     }
 
     fn show_recording_controls(&mut self, ui: &mut egui::Ui, status: &Status) {
-        ui.add_enabled_ui(!self.quitting, |ui| {
+        ui.add_enabled_ui(self.lifecycle == Lifecycle::Running, |ui| {
             ui.horizontal(|ui| {
                 let label = if status.mounted {
                     text::STOP_AND_RESTORE
@@ -109,19 +114,28 @@ impl App {
         ui.horizontal(|ui| {
             if let Some(tray) = &self.tray {
                 if ui
-                    .add_enabled(!self.quitting, egui::Button::new(text::HIDE_TO_TRAY))
+                    .add_enabled(
+                        self.lifecycle == Lifecycle::Running,
+                        egui::Button::new(text::HIDE_TO_TRAY),
+                    )
                     .clicked()
                 {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                 }
                 if ui
-                    .add_enabled(!self.quitting, egui::Button::new(text::QUIT))
+                    .add_enabled(
+                        self.lifecycle == Lifecycle::Running,
+                        egui::Button::new(text::QUIT),
+                    )
                     .clicked()
                 {
                     tray.quit(ctx);
                 }
             } else if ui
-                .add_enabled(!self.quitting, egui::Button::new(text::QUIT))
+                .add_enabled(
+                    self.lifecycle == Lifecycle::Running,
+                    egui::Button::new(text::QUIT),
+                )
                 .clicked()
             {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -135,7 +149,7 @@ impl App {
         ctx: &egui::Context,
         shutdown: Shutdown,
     ) {
-        if !self.quitting {
+        if self.lifecycle != Lifecycle::ShuttingDown {
             return;
         }
 
@@ -151,14 +165,14 @@ impl App {
             }
             if ui.button(text::EXIT_ANYWAY).clicked() {
                 self.worker.exit();
-                self.exit_ready = true;
+                self.lifecycle = Lifecycle::ExitReady;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });
     }
 
     fn show_settings(&mut self, ctx: &egui::Context) {
-        if !self.settings || self.quitting {
+        if !self.settings || self.lifecycle != Lifecycle::Running {
             return;
         }
 
@@ -176,16 +190,18 @@ impl App {
 
     fn handle_close(&mut self, ctx: &egui::Context, shutdown: Shutdown) {
         if shutdown == Shutdown::Complete {
-            self.exit_ready = true;
+            self.lifecycle = Lifecycle::ExitReady;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
 
-        if !ctx.input(|input| input.viewport().close_requested()) || self.exit_ready {
+        if !ctx.input(|input| input.viewport().close_requested())
+            || self.lifecycle == Lifecycle::ExitReady
+        {
             return;
         }
 
         ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-        if self.quitting {
+        if self.lifecycle != Lifecycle::Running {
             return;
         }
 
@@ -194,7 +210,7 @@ impl App {
             return;
         }
 
-        self.quitting = true;
+        self.lifecycle = Lifecycle::ShuttingDown;
         self.settings = false;
         self.worker.shutdown();
         if let Some(tray) = &self.tray {
