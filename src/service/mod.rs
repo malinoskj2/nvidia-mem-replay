@@ -250,7 +250,7 @@ fn run(
         ..State::default()
     };
 
-    let startup = initialize(store, &mut state).and_then(|()| {
+    let startup = state.accounting.load(store).and_then(|()| {
         config.validate()?;
         start(store, config, &mut state)
     });
@@ -260,17 +260,10 @@ fn run(
     publish(output, &state);
 
     loop {
-        let disconnected = matches!(
-            receiver.recv_timeout(WORKER_POLL_INTERVAL),
-            Err(mpsc::RecvTimeoutError::Disconnected)
-        );
-        let command = if disconnected {
-            Some(Command::Shutdown)
-        } else {
-            match mailbox.lock() {
-                Ok(mut mailbox) => mailbox.pending.take(),
-                Err(_) => Some(Command::Shutdown),
-            }
+        let _ = receiver.recv_timeout(WORKER_POLL_INTERVAL);
+        let command = match mailbox.lock() {
+            Ok(mut mailbox) => mailbox.pending.take(),
+            Err(_) => Some(Command::Shutdown),
         };
 
         match handle_command(store, command, &mut state, output) {
@@ -352,7 +345,7 @@ fn restart(store: &Store, config: &Config, state: &mut State) {
     let report = stop(store, state);
     if !report.is_ok() {
         state.error = Some(report.to_string());
-    } else if let Err(error) = initialize(store, state) {
+    } else if let Err(error) = state.accounting.load(store) {
         state.error = Some(format!("{error:#}"));
     } else if let Err(error) = start(store, config, state) {
         state.error = Some(format!("{error:#}"));
@@ -367,12 +360,6 @@ fn publish(output: &Mutex<Status>, state: &State) {
     }
 }
 
-pub(crate) fn recover(store: &Store) -> Result<()> {
-    recover_with(store, |redirect| {
-        nvidia::restore(redirect).map_err(Into::into)
-    })
-}
-
 pub(crate) fn recover_with(
     store: &Store,
     restore: impl FnOnce(&Redirect) -> Result<()>,
@@ -385,11 +372,6 @@ pub(crate) fn recover_with(
     }
 
     Ok(())
-}
-
-fn initialize(store: &Store, state: &mut State) -> Result<()> {
-    recover(store)?;
-    state.accounting.load(store)
 }
 
 fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {

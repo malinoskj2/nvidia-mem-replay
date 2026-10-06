@@ -4,10 +4,11 @@ New-Item -ItemType Directory -Force $cache | Out-Null
 
 function Fetch-Verified($name, $url, $sha256) {
     $path = Join-Path $cache $name
-    if (!(Test-Path $path) -or (Get-FileHash $path -Algorithm SHA256).Hash -ne $sha256) {
-        Invoke-WebRequest -Uri $url -OutFile $path
+    if ((Test-Path $path) -and (Get-FileHash $path -Algorithm SHA256).Hash -eq $sha256) {
+        return $path
     }
 
+    Invoke-WebRequest -Uri $url -OutFile $path
     if ((Get-FileHash $path -Algorithm SHA256).Hash -ne $sha256) { throw "SHA-256 mismatch: $name" }
 
     return $path

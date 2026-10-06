@@ -100,11 +100,9 @@ fn failed_checkpoint_keeps_recording_and_retries_at_bounded_cadence() {
 
     let now = Instant::now();
     let mut last_attempt = now;
-    let mut accounting = Accounting {
-        total: 100,
-        dirty: true,
-        ..Accounting::default()
-    };
+    let mut accounting = Accounting::default();
+    let mut meter = Meter::new(0);
+    accounting.observe(&mut meter, &sample(100), now).unwrap();
     std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
 
     accounting.checkpoint(&store, &mut last_attempt, now + Duration::from_secs(10));
@@ -113,8 +111,15 @@ fn failed_checkpoint_keeps_recording_and_retries_at_bounded_cadence() {
     assert!(accounting.warning.is_some());
     assert!(accounting.dirty);
 
+    accounting
+        .observe(&mut meter, &sample(100), now + Duration::from_secs(10))
+        .unwrap();
+    assert!(accounting.dirty);
+
     std::fs::remove_dir(directory.path().join("lifetime.pending")).unwrap();
-    accounting.total = 150;
+    accounting
+        .observe(&mut meter, &sample(150), now + Duration::from_secs(11))
+        .unwrap();
     accounting.checkpoint(&store, &mut last_attempt, now + Duration::from_secs(11));
 
     assert_eq!(store.lifetime().unwrap(), 0);
@@ -124,6 +129,40 @@ fn failed_checkpoint_keeps_recording_and_retries_at_bounded_cadence() {
     assert_eq!(store.lifetime().unwrap(), 150);
     assert!(accounting.warning.is_none());
     assert!(!accounting.dirty);
+}
+
+#[test]
+fn unchanged_telemetry_does_not_rewrite_lifetime_counter() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = Store::at(directory.path().to_owned()).unwrap();
+    store.save_lifetime(100).unwrap();
+    let mut accounting = Accounting::default();
+    accounting.load(&store).unwrap();
+    let mut meter = Meter::new(accounting.total);
+    let now = Instant::now();
+    let mut last_attempt = now;
+
+    // A write would fail; an unchanged counter should never attempt one.
+    std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
+    accounting.observe(&mut meter, &sample(0), now).unwrap();
+    accounting.checkpoint(&store, &mut last_attempt, now + Duration::from_secs(10));
+    assert!(accounting.warning.is_none());
+    assert_eq!(store.lifetime().unwrap(), 100);
+
+    std::fs::remove_dir(directory.path().join("lifetime.pending")).unwrap();
+    accounting
+        .observe(&mut meter, &sample(25), now + Duration::from_secs(11))
+        .unwrap();
+    accounting.checkpoint(&store, &mut last_attempt, now + Duration::from_secs(20));
+    assert_eq!(store.lifetime().unwrap(), 125);
+
+    std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
+    accounting
+        .observe(&mut meter, &sample(25), now + Duration::from_secs(21))
+        .unwrap();
+    accounting.checkpoint(&store, &mut last_attempt, now + Duration::from_secs(30));
+    assert!(accounting.warning.is_none());
+    assert_eq!(store.lifetime().unwrap(), 125);
 }
 
 #[test]
@@ -256,7 +295,7 @@ fn unconfirmed_helper_exit_keeps_recovery_journal() {
 }
 
 #[test]
-fn unsaved_accounting_survives_reinitialization() {
+fn unsaved_accounting_survives_reload() {
     let directory = tempfile::tempdir().unwrap();
     let store = Store::at(directory.path().to_owned()).unwrap();
     store.save_lifetime(5).unwrap();
@@ -264,7 +303,7 @@ fn unsaved_accounting_survives_reinitialization() {
     state.accounting.total = 42;
     state.accounting.dirty = true;
 
-    initialize(&store, &mut state).unwrap();
+    state.accounting.load(&store).unwrap();
 
     assert_eq!(state.snapshot().lifetime_bytes, 42);
 }

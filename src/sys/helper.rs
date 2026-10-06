@@ -290,12 +290,7 @@ impl Helper {
 
 impl Drop for Helper {
     fn drop(&mut self) {
-        if self.reader.is_some()
-            || self
-                .child
-                .try_wait()
-                .map_or(true, |status| status.is_none())
-        {
+        if self.reader.is_some() {
             let _ = self.stop();
         }
     }

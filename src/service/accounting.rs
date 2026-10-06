@@ -30,8 +30,9 @@ impl Accounting {
         sample: &Sample,
         now: Instant,
     ) -> Result<()> {
-        self.total = meter.observe(sample, now)?;
-        self.dirty = true;
+        let total = meter.observe(sample, now)?;
+        self.dirty |= total != self.total;
+        self.total = total;
         Ok(())
     }
 
