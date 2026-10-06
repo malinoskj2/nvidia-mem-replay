@@ -44,12 +44,30 @@ impl Tray {
             .with_menu_on_left_click(false)
             .build()?;
 
-        let quitting = Arc::new(AtomicBool::new(false));
-        let quit_flag = Arc::clone(&quitting);
+        let tray = Self {
+            _icon: icon,
+            quitting: Arc::new(AtomicBool::new(false)),
+            stop_item,
+            quit_item: quit,
+        };
+        tray.register_menu_handler(ctx, &show, stop);
+        register_icon_handler(ctx);
+
+        Ok(tray)
+    }
+
+    fn register_menu_handler(
+        &self,
+        ctx: &Context,
+        show: &MenuItem,
+        stop: impl Fn() + Send + Sync + 'static,
+    ) {
+        let quitting = Arc::clone(&self.quitting);
         let context = ctx.clone();
         let show_id = show.id().clone();
-        let stop_id = stop_item.id().clone();
-        let quit_id = quit.id().clone();
+        let stop_id = self.stop_item.id().clone();
+        let quit_id = self.quit_item.id().clone();
+
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             if event.id == show_id {
                 show_window(&context);
@@ -57,37 +75,12 @@ impl Tray {
                 stop();
                 show_window(&context);
             } else if event.id == quit_id {
-                quit_flag.store(true, Ordering::Relaxed);
+                quitting.store(true, Ordering::Relaxed);
                 show_window(&context);
                 context.send_viewport_cmd(ViewportCommand::Close);
             }
             context.request_repaint();
         }));
-
-        let context = ctx.clone();
-        TrayIconEvent::set_event_handler(Some(move |event| {
-            if matches!(
-                event,
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                } | TrayIconEvent::DoubleClick {
-                    button: MouseButton::Left,
-                    ..
-                }
-            ) {
-                show_window(&context);
-                context.request_repaint();
-            }
-        }));
-
-        Ok(Self {
-            _icon: icon,
-            quitting,
-            stop_item,
-            quit_item: quit,
-        })
     }
 
     pub(crate) fn quitting(&self) -> bool {
@@ -110,6 +103,26 @@ impl Drop for Tray {
         MenuEvent::set_event_handler(None::<fn(MenuEvent)>);
         TrayIconEvent::set_event_handler(None::<fn(TrayIconEvent)>);
     }
+}
+
+fn register_icon_handler(ctx: &Context) {
+    let context = ctx.clone();
+    TrayIconEvent::set_event_handler(Some(move |event| {
+        if matches!(
+            event,
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            }
+        ) {
+            show_window(&context);
+            context.request_repaint();
+        }
+    }));
 }
 
 fn show_window(ctx: &Context) {
