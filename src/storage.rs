@@ -46,6 +46,7 @@ impl Store {
             .write(true)
             .open(root.join("instance.lock"))?;
         lock.try_lock().map_err(|_| StorageError::Locked)?;
+
         Ok(Self { root, lock })
     }
 
@@ -87,12 +88,14 @@ impl Store {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
+
         let mut bytes = Vec::new();
         file.take(MAX_STATE_BYTES as u64 + 1)
             .read_to_end(&mut bytes)?;
         if bytes.len() > MAX_STATE_BYTES {
             return Err(StorageError::Oversized);
         }
+
         Ok(Some(serde_json::from_slice(&bytes)?))
     }
 
@@ -101,6 +104,7 @@ impl Store {
         if bytes.len() > MAX_STATE_BYTES {
             return Err(StorageError::Oversized);
         }
+
         atomic_write(&self.root.join(name), &bytes)?;
         Ok(())
     }
@@ -123,6 +127,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);
+
     fs::rename(temporary, path)
 }
 

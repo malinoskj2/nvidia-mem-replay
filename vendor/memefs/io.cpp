@@ -42,6 +42,7 @@ namespace Memfs::Interface {
 				*pBytesTransferred = 0;
 				return STATUS_SUCCESS;
 			}
+
 			endOffset = offset + length;
 			if (endOffset > fileNode->fileInfo.FileSize) {
 				endOffset = fileNode->fileInfo.FileSize;
@@ -50,6 +51,7 @@ namespace Memfs::Interface {
 			if (writeToEndOfFile) {
 				offset = fileNode->fileInfo.FileSize;
 			}
+
 			endOffset = offset + length;
 			if (endOffset > fileNode->fileInfo.FileSize) {
 				result = CompatSetFileSizeInternal(fileSystem, fileNode, endOffset, false);

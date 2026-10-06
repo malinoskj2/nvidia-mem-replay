@@ -36,12 +36,14 @@ impl Tray {
         let stop_item = MenuItem::new("Stop and restore temporary path", true, None);
         let quit = MenuItem::new("Quit", true, None);
         menu.append_items(&[&show, &stop_item, &quit])?;
+
         let icon = TrayIconBuilder::new()
             .with_icon(replay_icon()?)
             .with_tooltip("Replay in RAM · click to open")
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
             .build()?;
+
         let quitting = Arc::new(AtomicBool::new(false));
         let quit_flag = Arc::clone(&quitting);
         let context = ctx.clone();
@@ -61,6 +63,7 @@ impl Tray {
             }
             context.request_repaint();
         }));
+
         let context = ctx.clone();
         TrayIconEvent::set_event_handler(Some(move |event| {
             if matches!(
@@ -78,6 +81,7 @@ impl Tray {
                 context.request_repaint();
             }
         }));
+
         Ok(Self {
             _icon: icon,
             quitting,
@@ -130,5 +134,6 @@ fn replay_icon() -> Result<Icon, tray_icon::BadIcon> {
             rgba.extend_from_slice(&pixel);
         }
     }
+
     Icon::from_rgba(rgba, 32, 32)
 }

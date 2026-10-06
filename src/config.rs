@@ -27,6 +27,7 @@ impl<'de> Deserialize<'de> for Config {
         impl Default for Saved {
             fn default() -> Self {
                 let config = Config::default();
+
                 Self {
                     drive: config.drive,
                     memory_limit_mb: config.memory_limit_mb,
@@ -36,6 +37,7 @@ impl<'de> Deserialize<'de> for Config {
         }
 
         let saved = Saved::deserialize(deserializer)?;
+
         Ok(Self {
             drive: saved.drive,
             memory_limit_mb: saved.memory_limit_mb,

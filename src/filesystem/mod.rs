@@ -25,6 +25,7 @@ pub(super) fn read_redirect(reader: &mut impl BufRead, config: &Config) -> Resul
         bytes.len() <= MAX_RECOVERY_SNAPSHOT_BYTES && bytes.ends_with(b"\n"),
         "invalid or oversized recovery snapshot"
     );
+
     let redirect: Redirect = serde_json::from_slice(&bytes).context("decode recovery snapshot")?;
     anyhow::ensure!(
         redirect.target == config.target()
@@ -32,6 +33,7 @@ pub(super) fn read_redirect(reader: &mut impl BufRead, config: &Config) -> Resul
             && redirect.original.with_path(&redirect.target) == redirect.replacement,
         "recovery snapshot does not match configuration"
     );
+
     Ok(redirect)
 }
 
@@ -45,6 +47,7 @@ pub(super) fn report_final(
         output.write_all(b"\n")?;
         output.flush()?;
     }
+
     stopped.result.context("stop bundled MemFS Extended")?;
     reporting
 }

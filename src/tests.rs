@@ -7,6 +7,7 @@ fn pending_redirect() -> Redirect {
         bytes: Vec::new(),
     }
     .with_path(r"C:\NVIDIA");
+
     Redirect {
         replacement: original.with_path(r"R:\Temp"),
         original,
@@ -22,11 +23,13 @@ fn pending_recovery_precedes_malformed_configuration() {
     store.save_redirect(&pending_redirect()).unwrap();
     std::fs::write(directory.path().join("config.json"), b"broken").unwrap();
     let mut restored = false;
+
     let result = startup_config(&store, |redirect| {
         assert_eq!(redirect.original_path, r"C:\NVIDIA");
         restored = true;
         Ok(())
     });
+
     assert!(restored);
     assert!(result.is_err());
     assert!(store.redirect().unwrap().is_none());
@@ -38,9 +41,12 @@ fn failed_recovery_retains_journal_and_can_retry_before_loading_configuration() 
     let store = storage::Store::at(directory.path().to_owned()).unwrap();
     store.save_redirect(&pending_redirect()).unwrap();
     std::fs::write(directory.path().join("config.json"), b"broken").unwrap();
+
     let failure = startup_config(&store, |_| anyhow::bail!("registry unavailable"));
+
     assert!(format!("{:#}", failure.unwrap_err()).contains("registry unavailable"));
     assert!(store.redirect().unwrap().is_some());
+
     assert!(startup_config(&store, |_| Ok(())).is_err());
     assert!(store.redirect().unwrap().is_none());
 }

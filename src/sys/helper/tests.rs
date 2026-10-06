@@ -10,6 +10,7 @@ fn helper(script: &str) -> Helper {
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
+
     Helper::from_child(child).unwrap()
 }
 
@@ -28,7 +29,9 @@ fn shutdown_joins_reader_and_keeps_the_final_counter() {
         SAMPLE.replace("17", "5")
     ));
     wait_for_sample(&mut helper);
+
     let stopped = helper.stop();
+
     stopped.result.unwrap();
     assert!(stopped.exited);
     assert_eq!(stopped.sample.unwrap().written_bytes, 17);
@@ -39,7 +42,9 @@ fn shutdown_joins_reader_and_keeps_the_final_counter() {
 #[test]
 fn nonzero_exit_keeps_final_sample_and_reports_status() {
     let mut helper = helper(&format!("read command; printf '%s\\n' '{SAMPLE}'; exit 42"));
+
     let stopped = helper.stop();
+
     assert!(stopped.exited);
     assert_eq!(stopped.sample.unwrap().written_bytes, 17);
     match stopped.result.unwrap_err() {
@@ -54,7 +59,9 @@ fn malformed_final_frame_keeps_last_sample_and_reports_failure() {
     let mut helper = helper(&format!(
         "read command; printf '%s\\n' '{SAMPLE}'; printf '%s\\n' 'invalid JSON'"
     ));
+
     let stopped = helper.stop();
+
     assert!(stopped.exited);
     assert_eq!(stopped.sample.unwrap().written_bytes, 17);
     assert!(matches!(stopped.result, Err(HelperError::Telemetry(_))));
@@ -66,7 +73,9 @@ fn unsupported_final_protocol_keeps_last_valid_sample() {
         "read command; printf '%s\\n' '{SAMPLE}'; printf '%s\\n' '{}'",
         SAMPLE.replace("\"version\":1", "\"version\":2")
     ));
+
     let stopped = helper.stop();
+
     assert_eq!(stopped.sample.unwrap().version, 1);
     assert!(matches!(stopped.result, Err(HelperError::Telemetry(_))));
 }
@@ -78,7 +87,9 @@ fn forced_shutdown_is_reported_and_keeps_the_latest_sample() {
     ));
     wait_for_sample(&mut helper);
     helper.shutdown_timeout = Duration::from_millis(100);
+
     let stopped = helper.stop();
+
     assert!(stopped.exited);
     assert!(matches!(
         stopped.result,
@@ -111,7 +122,9 @@ fn process_failure_takes_precedence_over_invalid_final_telemetry() {
     let mut helper = helper(&format!(
         "read command; printf '%s\\n' '{SAMPLE}'; printf '%s\\n' 'invalid JSON'; exit 42"
     ));
+
     let stopped = helper.stop();
+
     assert_eq!(stopped.sample.unwrap().written_bytes, 17);
     assert!(matches!(stopped.result, Err(HelperError::FailedExit(_))));
 }

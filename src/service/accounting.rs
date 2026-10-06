@@ -20,6 +20,7 @@ impl Accounting {
         if !self.dirty {
             self.total = store.lifetime()?;
         }
+
         Ok(())
     }
 
@@ -38,6 +39,7 @@ impl Accounting {
         if now.duration_since(*last_attempt) < CHECKPOINT_INTERVAL {
             return;
         }
+
         // Retry failures at the same bounded cadence while recording continues.
         *last_attempt = now;
         if let Err(error) = self.persist(store) {
@@ -55,6 +57,7 @@ impl Accounting {
             self.dirty = false;
             self.warning = None;
         }
+
         Ok(())
     }
 }

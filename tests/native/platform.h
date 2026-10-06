@@ -97,6 +97,7 @@ inline int _wcsnicmp(PCWSTR a, PCWSTR b, int length) {
         int diff = std::towlower(a[i]) - std::towlower(b[i]);
         if (diff || !a[i]) return diff;
     }
+
     return 0;
 }
 inline int CompareStringW(int, int, PCWSTR a, int alen, PCWSTR b, int blen) {
@@ -120,6 +121,7 @@ void* operator new(size_t size) {
     if (allocationFailure == 0) {
         allocationFailure = -1; allocationFailed = true; throw std::bad_alloc();
     }
+
     if (allocationFailure > 0) --allocationFailure;
     if (void* result = std::malloc(size ? size : 1)) return result;
     throw std::bad_alloc();
@@ -132,6 +134,7 @@ void operator delete[](void* value, size_t) noexcept { std::free(value); }
 static int virtualAllocationFailure = -1;
 inline void* VirtualAlloc(void*, size_t length, int, int) {
     if (virtualAllocationFailure == 0) { virtualAllocationFailure = -1; return nullptr; }
+
     if (virtualAllocationFailure > 0) --virtualAllocationFailure;
     return std::calloc(1, length);
 }

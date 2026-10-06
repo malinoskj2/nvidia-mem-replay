@@ -8,6 +8,7 @@ fn binary_and_string_paths_preserve_the_registry_type() {
             bytes: vec![],
         }
         .with_path(r"C:\Temp\影像");
+
         assert_eq!(value.path().unwrap(), r"C:\Temp\影像");
         assert_eq!(value.with_path(r"R:\NVIDIA-Replay").kind, kind);
     }
@@ -55,6 +56,7 @@ fn restoration_preserves_user_edits_and_original_binary_bytes() {
         original_path: r"C:\Temp".to_owned(),
         target: r"R:\NVIDIA-Replay".to_owned(),
     };
+
     assert_eq!(redirect.restore_value(&replacement), Some(&original));
     assert_eq!(
         redirect.restore_value(&original.with_path(r"D:\NewTemp")),

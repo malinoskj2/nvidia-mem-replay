@@ -73,6 +73,7 @@ impl Helper {
         if std::path::Path::new(&format!("{}\\", config.mount())).try_exists()? {
             return Err(HelperError::Occupied(config.mount()));
         }
+
         let mut command = Command::new(std::env::current_exe()?);
         command
             .args([
@@ -90,6 +91,7 @@ impl Helper {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
+
         Self::wait_ready(command, config, Some(redirect))
     }
 
@@ -109,6 +111,7 @@ impl Helper {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .creation_flags(0x0800_0000);
+
         Self::wait_ready(command, config, None)
     }
 
@@ -124,6 +127,7 @@ impl Helper {
         {
             return Err(HelperError::SnapshotOversized);
         }
+
         let mut helper = Self::from_child(command.spawn()?)?;
         if let Some(snapshot) = snapshot {
             // The first telemetry frame acknowledges receipt of this exact snapshot.
@@ -135,6 +139,7 @@ impl Helper {
             input.write_all(&snapshot)?;
             input.write_all(b"\n")?;
         }
+
         let deadline = Instant::now() + READY_TIMEOUT;
         loop {
             if helper.sample()?.is_some() {
@@ -168,6 +173,7 @@ impl Helper {
                     Ok(_) => decode_sample(&line),
                     Err(error) => Err(error.to_string()),
                 };
+
                 let Ok(mut inbox) = output.lock() else { break };
                 match parsed {
                     Ok(sample) => inbox.latest = Some((sample, Instant::now())),
@@ -178,6 +184,7 @@ impl Helper {
                 }
             }
         });
+
         Ok(Self {
             input: child.stdin.take(),
             child,
@@ -198,6 +205,7 @@ impl Helper {
         if self.child.try_wait()?.is_some() {
             return Err(HelperError::Exited);
         }
+
         let Some((sample, observed)) = &inbox.latest else {
             return Ok(None);
         };
@@ -206,6 +214,7 @@ impl Helper {
                 "helper stopped publishing telemetry".to_owned(),
             ));
         }
+
         Ok(Some(sample.clone()))
     }
 
@@ -226,11 +235,13 @@ impl Helper {
                 Err(HelperError::Telemetry("telemetry lock failed".to_owned())),
             ),
         };
+
         // A process failure takes precedence, while the last sample is always retained.
         let result = match process_result {
             Ok(()) => telemetry_result,
             Err(error) => Err(error),
         };
+
         ShutdownReport {
             sample,
             result,
@@ -242,6 +253,7 @@ impl Helper {
         if let Some(mut input) = self.input.take() {
             let _ = input.write_all(b"stop\n");
         }
+
         let mut deadline = Instant::now() + self.shutdown_timeout;
         let mut forced = false;
         let status = loop {
@@ -258,17 +270,20 @@ impl Helper {
             }
             thread::sleep(SHUTDOWN_POLL_INTERVAL);
         };
+
         if let Some(reader) = self.reader.take() {
             reader
                 .join()
                 .map_err(|_| HelperError::Telemetry("reader thread failed".to_owned()))?;
         }
+
         if forced {
             return Err(HelperError::ForcedTermination);
         }
         if !status.success() {
             return Err(HelperError::FailedExit(status));
         }
+
         Ok(())
     }
 }

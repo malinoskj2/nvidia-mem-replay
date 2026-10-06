@@ -17,6 +17,7 @@ def source(name):
     if name == 'exceptions.h':
         # MSVC accepts these legacy overrides; libstdc++ requires noexcept.
         text = text.replace('what() const override', 'what() const noexcept override')
+
     return re.sub(r'^\s*#(?:include|pragma once)[^\n]*\n', '', text, flags=re.M)
 
 
@@ -25,14 +26,17 @@ def method(name, signature):
     text = source(name)
     start = text.index(signature)
     opening = text.index('{', start)
+
     # Ignore literals and comments without changing offsets into the source.
     masked = re.sub(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
                     lambda match: ' ' * len(match.group()), text, flags=re.S)
+
     depth = 1
     end = opening + 1
     while depth:
         depth += (masked[end] == '{') - (masked[end] == '}')
         end += 1
+
     return text[start:end] + '\n'
 
 
@@ -59,8 +63,10 @@ with tempfile.TemporaryDirectory(prefix='memefs-native-') as tmp:
     cpp = Path(tmp) / 'regressions.cpp'
     exe = Path(tmp) / 'regressions'
     cpp.write_text('\n'.join(parts))
+
     compiler = shlex.split(os.environ.get('CXX', 'clang++'))
     flags = shlex.split(os.environ.get('NATIVE_CXXFLAGS', '-fsanitize=address,undefined -fno-omit-frame-pointer'))
     subprocess.run(compiler + ['-std=c++20', '-g', '-O1', '-pthread', '-DMEMFS_DIAGNOSTICS=1'] +
                    flags + [str(cpp), '-o', str(exe)], check=True)
+
     subprocess.run([str(exe)], check=True)

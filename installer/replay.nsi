@@ -22,6 +22,7 @@ Function .onInit
     MessageBox MB_ICONSTOP "Replay in RAM requires 64-bit Windows."
     Abort
   ${EndIf}
+
   SetRegView 64
   SetShellVarContext all
 FunctionEnd
@@ -31,6 +32,7 @@ Section "Replay in RAM"
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
   File "../dist/winfsp-2.1.25156.msi"
+
   SetRegView 32
   ReadRegStr $4 HKLM "Software\WinFsp" "InstallDir"
   SetRegView 64
@@ -43,6 +45,7 @@ Section "Replay in RAM"
       ${EndIf}
     ${EndIf}
   ${EndIf}
+
   ExecWait '$SYSDIR\msiexec.exe /i "$PLUGINSDIR\winfsp-2.1.25156.msi" /passive /norestart ADDLOCAL=F.Main,F.User' $0
   ${If} $0 == 3010
     SetRebootFlag true
@@ -52,21 +55,26 @@ Section "Replay in RAM"
     MessageBox MB_ICONSTOP "WinFsp installation failed (code $0). Resolve the WinFsp installer error and run this installer again."
     Abort
   ${EndIf}
+
   driver_ready:
   SetOutPath "$INSTDIR"
   File "../dist/nvidia-mem-replay.exe"
   File "../dist/memefs-x64.exe"
   File "../dist/README.md"
   File "../dist/LICENSE"
+
   SetOutPath "$INSTDIR\licenses"
   File "../dist/licenses/*"
+
   SetOutPath "$INSTDIR\source"
   File "../dist/source/*"
   SetOutPath "$INSTDIR"
+
   WriteUninstaller "$INSTDIR\uninstall.exe"
   CreateDirectory "$SMPROGRAMS\Replay in RAM"
   CreateShortcut "$SMPROGRAMS\Replay in RAM\Replay in RAM.lnk" "$INSTDIR\nvidia-mem-replay.exe"
   CreateShortcut "$SMPROGRAMS\Replay in RAM\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReplayInRam" "DisplayName" "Replay in RAM"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReplayInRam" "DisplayVersion" "0.1.0"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReplayInRam" "UninstallString" '"$INSTDIR\uninstall.exe"'
@@ -88,6 +96,7 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\Replay in RAM\Replay in RAM.lnk"
   Delete "$SMPROGRAMS\Replay in RAM\Uninstall.lnk"
   RMDir "$SMPROGRAMS\Replay in RAM"
+
   Delete "$INSTDIR\nvidia-mem-replay.exe"
   Delete "$INSTDIR\memefs-x64.exe"
   Delete "$INSTDIR\README.md"
@@ -96,5 +105,6 @@ Section "Uninstall"
   RMDir /r "$INSTDIR\source"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
+
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReplayInRam"
 SectionEnd

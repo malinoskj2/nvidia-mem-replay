@@ -21,10 +21,12 @@ pub(crate) fn decode_sample(frame: &[u8]) -> Result<Sample, String> {
     if frame.len() > MAX_TELEMETRY_FRAME_BYTES || !frame.ends_with(b"\n") {
         return Err("invalid or oversized helper telemetry".to_owned());
     }
+
     let sample: Sample = serde_json::from_slice(frame).map_err(|error| error.to_string())?;
     if sample.version != TELEMETRY_PROTOCOL_VERSION {
         return Err(format!("unsupported protocol version {}", sample.version));
     }
+
     Ok(sample)
 }
 
@@ -60,14 +62,17 @@ impl Meter {
         if sample.written_bytes < self.last {
             return Err(TelemetryError::CounterReset);
         }
+
         let total = self
             .base
             .checked_add(sample.written_bytes)
             .ok_or(TelemetryError::Overflow)?;
+
         if sample.written_bytes > self.last {
             self.activity = Some(now);
         }
         self.last = sample.written_bytes;
+
         Ok(total)
     }
 

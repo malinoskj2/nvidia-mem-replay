@@ -130,6 +130,7 @@ namespace Memfs {
 		~LookupGuard() {
 			this->memfs.diagLookupsInFlight.fetch_sub(1);
 			this->memfs.diagLookups.fetch_add(1, std::memory_order_relaxed);
+
 			if (this->memfs.diagMapEpoch.load() != this->before ||
 				this->writerSeen || this->memfs.diagWritersActive.load() != 0) {
 				this->memfs.diagOverlappedLookups.fetch_add(1, std::memory_order_relaxed);

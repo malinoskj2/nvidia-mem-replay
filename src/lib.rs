@@ -19,6 +19,7 @@ pub fn run() -> Result<()> {
     if filesystem::dispatch()? {
         return Ok(());
     }
+
     let startup = (|| -> Result<_> {
         let store = storage::Store::open().context("open application state")?;
         let config = startup_config(&store, |redirect| {
@@ -27,6 +28,7 @@ pub fn run() -> Result<()> {
         let worker = service::Worker::spawn(store, config.clone());
         Ok((worker, config))
     })();
+
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("Replay in RAM")
@@ -34,6 +36,7 @@ pub fn run() -> Result<()> {
             .with_min_inner_size([420.0, 420.0]),
         ..Default::default()
     };
+
     eframe::run_native(
         "Replay in RAM",
         options,

@@ -51,6 +51,7 @@ impl RawValue {
         {
             return Err(NvidiaError::Format);
         }
+
         let mut words: Vec<u16> = self
             .bytes
             .as_chunks::<2>()
@@ -61,6 +62,7 @@ impl RawValue {
         while words.last() == Some(&0) {
             words.pop();
         }
+
         let path = String::from_utf16(&words).map_err(|_| NvidiaError::Format)?;
         let drive_path = path.as_bytes().get(1..3) == Some(b":\\")
             && path.as_bytes().first().is_some_and(u8::is_ascii_alphabetic);
@@ -69,6 +71,7 @@ impl RawValue {
         if path.contains('\0') || !(drive_path || unc_path || expandable_path) {
             return Err(NvidiaError::Path);
         }
+
         Ok(path)
     }
 
@@ -78,6 +81,7 @@ impl RawValue {
             .chain(std::iter::once(0))
             .flat_map(u16::to_le_bytes)
             .collect();
+
         Self {
             kind: self.kind,
             bytes,
@@ -93,6 +97,7 @@ pub(crate) fn plan(target: String) -> Result<Redirect, NvidiaError> {
     {
         return Err(NvidiaError::RamOriginal);
     }
+
     Ok(Redirect {
         replacement: original.with_path(&target),
         original,
@@ -105,6 +110,7 @@ pub(crate) fn apply(redirect: &Redirect) -> Result<(), NvidiaError> {
     if read()? != redirect.original {
         return Err(NvidiaError::Changed);
     }
+
     write(&redirect.replacement)
 }
 
@@ -121,6 +127,7 @@ pub(crate) fn restore(redirect: &Redirect) -> Result<(), NvidiaError> {
             if let Some(original) = redirect.restore_value(&value) {
                 write(original)?;
             }
+
             Ok(())
         }
         Err(NvidiaError::Missing) => Ok(()),
@@ -137,10 +144,12 @@ fn read() -> Result<RawValue, NvidiaError> {
         RegKey,
         enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WOW64_64KEY},
     };
+
     let key = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_with_flags(KEY, KEY_READ | KEY_WOW64_64KEY)
         .map_err(registry_error)?;
     let value = key.get_raw_value("TempFilePath").map_err(registry_error)?;
+
     Ok(RawValue {
         kind: value.vtype as u32,
         bytes: value.bytes.into_owned(),
@@ -159,6 +168,7 @@ fn write(value: &RawValue) -> Result<(), NvidiaError> {
         3 => RegType::REG_BINARY,
         _ => return Err(NvidiaError::Format),
     };
+
     let key = RegKey::predef(HKEY_CURRENT_USER)
         .open_subkey_with_flags(KEY, KEY_WRITE | KEY_WOW64_64KEY)?;
     key.set_raw_value(
@@ -168,6 +178,7 @@ fn write(value: &RawValue) -> Result<(), NvidiaError> {
             bytes: std::borrow::Cow::Borrowed(&value.bytes),
         },
     )?;
+
     Ok(())
 }
 

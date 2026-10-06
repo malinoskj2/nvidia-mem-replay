@@ -100,6 +100,7 @@ namespace Memfs::Interface {
 			std::shared_lock mapLock(memfs->GetFileMapMutex());
 			namedStreams = memfs->EnumerateNamedStreams(*fileNode, false);
 		}
+
 		for (const auto& namedStream : namedStreams) {
 			std::shared_lock nsLock(namedStream->nodeMutex);
 			if (!CompatAddStreamInfo(namedStream, buffer, length, pBytesTransferred)) {

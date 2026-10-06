@@ -24,6 +24,7 @@ public:
 	DynamicStruct(const DynamicStruct& other) {
 		wantedSize_ = other.wantedSize_;
 		data_ = std::unique_ptr<int64_t[]>(new int64_t[this->RequiredInt64Amount()]);
+
 		std::memcpy(data_.get(), other.data_.get(), this->ByteSize());
 	}
 
@@ -41,6 +42,7 @@ public:
 		if (this != &other) {
 			wantedSize_ = other.wantedSize_;
 			data_ = std::unique_ptr<int64_t[]>(new int64_t[this->RequiredInt64Amount()]);
+
 			std::memcpy(data_.get(), other.data_.get(), this->ByteSize());
 		}
 

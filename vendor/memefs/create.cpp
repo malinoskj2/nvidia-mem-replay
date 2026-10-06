@@ -24,6 +24,7 @@ MemFs::MemFs(ULONG flags, UINT64 maxFsSize, const wchar_t* fileSystemName, const
 	if (rootSddl == nullptr) {
 		rootSddl = L"O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;WD)";
 	}
+
 	if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(rootSddl, SDDL_REVISION_1,
 	                                                          &rootSecurity, &rootSecuritySize)) {
 		throw CreateException(FspNtStatusFromWin32(GetLastError()));
@@ -72,6 +73,7 @@ MemFs::MemFs(ULONG flags, UINT64 maxFsSize, const wchar_t* fileSystemName, const
 			static_cast<MemFs*>(fs->UserContext)->unexpectedStop.store(true, std::memory_order_release);
 		}
 	};
+
 	FSP_FILE_SYSTEM* fileSystemReceiver;
 	NTSTATUS status = FspFileSystemCreate(devicePathMut.data(), &volumeParams, &Interface::Interface, &fileSystemReceiver);
 	if (!NT_SUCCESS(status)) {

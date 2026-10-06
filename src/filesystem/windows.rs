@@ -49,6 +49,7 @@ pub(super) fn dispatch() -> Result<bool> {
     else {
         return Ok(false);
     };
+
     run(&Config {
         drive,
         memory_limit_mb,
@@ -58,8 +59,10 @@ pub(super) fn dispatch() -> Result<bool> {
 
 fn run(config: &Config) -> Result<()> {
     config.validate()?;
+
     let redirect = super::read_redirect(&mut io::stdin().lock(), config)?;
     let mut filesystem = Helper::start_memefs(config).context("start bundled MemFS Extended")?;
+
     let (stop, receiver) = mpsc::sync_channel(1);
     let reader = thread::spawn(move || {
         let mut line = Vec::new();
@@ -69,6 +72,7 @@ fn run(config: &Config) -> Result<()> {
             .read_until(b'\n', &mut line);
         let _ = stop.send(());
     });
+
     let mut stdout = io::stdout().lock();
     let reporting = (|| -> Result<()> {
         loop {
@@ -77,6 +81,7 @@ fn run(config: &Config) -> Result<()> {
                 stdout.write_all(b"\n")?;
                 stdout.flush()?;
             }
+
             if !matches!(
                 receiver.recv_timeout(TELEMETRY_REPORT_INTERVAL),
                 Err(mpsc::RecvTimeoutError::Timeout)
@@ -86,12 +91,14 @@ fn run(config: &Config) -> Result<()> {
         }
         Ok(())
     })();
+
     // GUI EOF includes crashes. Restore the exact original before dropping RAM.
     let restored = nvidia::restore(&redirect);
     let stopped = filesystem.stop();
     if reader.is_finished() {
         let _ = reader.join();
     }
+
     // Forward completed writes even when reporting or restoration failed.
     let final_report = super::report_final(&mut stdout, stopped, reporting);
     restored?;

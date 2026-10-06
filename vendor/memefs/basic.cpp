@@ -14,6 +14,7 @@ std::wstring& MemFs::GetVolumeLabel() {
 
 void MemFs::SetVolumeLabel(const std::wstring& str) {
 	std::wstring label = str;
+
 	if (label.length() >= Interface::MAX_VOLUME_LABEL_STR_LENGTH) {
 		label = label.substr(0, Interface::MAX_VOLUME_LABEL_STR_LENGTH - 1);
 	}

@@ -81,6 +81,7 @@ void FileNode::Reference() {
 #if MEMFS_DIAGNOSTICS
 	this->DiagCheckAlive("Reference");
 #endif
+
 	InterlockedIncrement(&this->refCount);
 
 	if (LOG_REFERENCES) {
@@ -92,6 +93,7 @@ void FileNode::Dereference() {
 #if MEMFS_DIAGNOSTICS
 	this->DiagCheckAlive("Dereference");
 #endif
+
 	const long newRefCount = InterlockedDecrement(&this->refCount);
 
 	if (LOG_REFERENCES) {
@@ -102,6 +104,7 @@ void FileNode::Dereference() {
 		if (LOG_REFERENCES) {
 			FspServiceLog(EVENTLOG_INFORMATION_TYPE, (PWSTR)L"Removing %s", this->fileName.c_str());
 		}
+
 		delete this;
 	}
 }
@@ -110,6 +113,7 @@ void FileNode::CopyFileInfo(FSP_FSCTL_FILE_INFO* fileInfoDest) const {
 #if MEMFS_DIAGNOSTICS
 	this->DiagCheckAlive("CopyFileInfo");
 #endif
+
 	if (this->IsMainNode()) {
 		*fileInfoDest = this->fileInfo;
 	} else {
@@ -117,6 +121,7 @@ void FileNode::CopyFileInfo(FSP_FSCTL_FILE_INFO* fileInfoDest) const {
 #if MEMFS_DIAGNOSTICS
 		mainFile->DiagCheckAlive("CopyFileInfo(main node)");
 #endif
+
 		std::shared_lock mainLock(mainFile->nodeMutex);
 		*fileInfoDest = mainFile->fileInfo;
 		mainLock.unlock();
@@ -139,6 +144,7 @@ FileNode* FileNode::GetMainNode() const {
 		this->mainFileNode->DiagCheckAlive("GetMainNode(main node)");
 	}
 #endif
+
 	return this->mainFileNode;
 }
 
@@ -213,6 +219,7 @@ void FileNode::SetEa(PFILE_FULL_EA_INFORMATION ea) {
 		if (p->second.HoldsStruct()) {
 			eaSizeMinus = FspFileSystemGetEaPackedSize(p->second.Struct());
 		}
+
 		eaMap.erase(p); // Now, here the old ea is hopefully freed
 	}
 

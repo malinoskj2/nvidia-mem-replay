@@ -110,11 +110,13 @@ impl Control {
             if matches!(mailbox.pending, Some(Command::Exit)) {
                 return;
             }
+
             if matches!(command, Command::Shutdown | Command::Exit) {
                 mailbox.closing = true;
             } else if mailbox.closing {
                 return;
             }
+
             // The latest desired state replaces pending work; Exit is final.
             mailbox.pending = Some(command);
             // A full channel already contains a wake-up; the request is retained.
@@ -134,6 +136,7 @@ impl Worker {
         let output = Arc::clone(&status);
         let mailbox = Arc::clone(&control.mailbox);
         let join = thread::spawn(move || run(&store, &config, &receiver, &mailbox, &output));
+
         Self {
             control,
             status,
@@ -210,6 +213,7 @@ impl State {
             .session
             .as_ref()
             .is_some_and(|session| !session.stopping && session.meter.active(Instant::now()));
+
         Status {
             message: self.message,
             mounted: self.session.is_some(),
@@ -246,12 +250,14 @@ fn run(
         message: DisplayStatus::StartFailed,
         ..State::default()
     };
+
     if let Err(error) = initialize(store, &mut state) {
         state.error = Some(format!("{error:#}"));
     } else if let Err(error) = start(store, config, &mut state) {
         state.error = Some(format!("{error:#}"));
     }
     publish(output, &state);
+
     loop {
         let disconnected = matches!(
             receiver.recv_timeout(WORKER_POLL_INTERVAL),
@@ -265,11 +271,13 @@ fn run(
                 Err(_) => Some(Command::Shutdown),
             }
         };
+
         match handle_command(store, command, &mut state, output) {
             CommandOutcome::Poll => {}
             CommandOutcome::Continue => continue,
             CommandOutcome::Exit => break,
         }
+
         if let Some(session) = &mut state.session
             && !session.stopping
             && let Err(error) = poll(store, session, &mut state.accounting, &mut state.message)
@@ -281,6 +289,7 @@ fn run(
             }
             state.error = Some(message);
         }
+
         publish(output, &state);
     }
 }
@@ -302,9 +311,11 @@ fn handle_command(
             state.shutdown = Shutdown::Pending;
             state.message = DisplayStatus::Stopping;
             publish(output, state);
+
             let report = stop(store, state);
             complete_shutdown(state, &report);
             publish(output, state);
+
             if state.shutdown == Shutdown::Complete {
                 return CommandOutcome::Exit;
             }
@@ -327,10 +338,12 @@ fn handle_command(
                 publish(output, state);
                 return CommandOutcome::Continue;
             }
+
             restart(store, &config, state);
         }
         None => {}
     }
+
     CommandOutcome::Poll
 }
 
@@ -369,6 +382,7 @@ pub(crate) fn recover_with(
             .clear_redirect()
             .context("clear redirect recovery journal")?;
     }
+
     Ok(())
 }
 
@@ -379,15 +393,18 @@ fn initialize(store: &Store, state: &mut State) -> Result<()> {
 
 fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {
     config.validate()?;
+
     let redirect =
         nvidia::plan(config.target()).context("discover NVIDIA temporary files location")?;
     state.location = Some(redirect.clone());
     store.save_config(config)?;
+
     let helper = Helper::start(config, &redirect).context("mount RAM filesystem")?;
     store
         .save_redirect(&redirect)
         .context("save redirect recovery journal")?;
     nvidia::apply(&redirect).context("redirect NVIDIA temporary files")?;
+
     state.memory_limit_bytes = Some(config.limit_bytes());
     state.message = DisplayStatus::Waiting;
     let now = Instant::now();
@@ -400,6 +417,7 @@ fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {
         checkpoint: now,
         stopping: false,
     });
+
     Ok(())
 }
 
@@ -415,9 +433,11 @@ fn poll(
         session.last_sample = now;
         session.sample = Some(sample);
     }
+
     if now.duration_since(session.last_sample) > TELEMETRY_TIMEOUT {
         anyhow::bail!("RAM helper telemetry is stale");
     }
+
     *message = if session.meter.active(now) {
         DisplayStatus::Writing
     } else {

@@ -44,6 +44,7 @@ impl std::fmt::Display for CleanupReport {
                 separator = "\n";
             }
         }
+
         Ok(())
     }
 }
@@ -70,11 +71,13 @@ pub(super) fn stop_with(
                 } else {
                     Ok(())
                 };
+
                 (restoration, journal)
             }
             Ok(None) => (Ok(()), Ok(())),
             Err(error) => (Err(error).context("read redirect recovery journal"), Ok(())),
         };
+
         let report = CleanupReport {
             restoration,
             helper: Ok(()),
@@ -82,20 +85,25 @@ pub(super) fn stop_with(
             persistence: state.accounting.persist(store),
             journal,
         };
+
         if report.is_ok() {
             state.message = DisplayStatus::Stopped;
         }
+
         return report;
     };
+
     // Restore before unmounting; retain the journal if restoration or exit fails.
     let restoration = restore(&running.redirect).context("restore NVIDIA temporary path; retry restoration or set Temporary files to a persistent drive in Alt+Z");
     let stopped = running.helper.stop();
     let exited = stopped.exited;
     let report = finish_stop(store, &mut running.meter, state, restoration, stopped);
+
     if !exited {
         running.stopping = true;
         state.session = Some(running);
     }
+
     report
 }
 
@@ -111,6 +119,7 @@ pub(super) fn finish_stop(
     } else {
         DisplayStatus::HelperRunning
     };
+
     // Even a failed helper stop can contain a valid final sample.
     let accounting = if let Some(sample) = &stopped.sample {
         state
@@ -128,6 +137,7 @@ pub(super) fn finish_stop(
     } else {
         Ok(())
     };
+
     let report = CleanupReport {
         restoration,
         helper: stopped.result.context("stop RAM filesystem"),
@@ -135,9 +145,11 @@ pub(super) fn finish_stop(
         persistence,
         journal,
     };
+
     if report.is_ok() {
         state.message = DisplayStatus::Stopped;
     }
+
     report
 }
 

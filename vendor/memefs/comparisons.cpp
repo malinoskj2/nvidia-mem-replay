@@ -28,6 +28,7 @@ namespace Memfs::Utils {
 		const wchar_t* s = s0;
 		const wchar_t* t = t0;
 		int v = 0;
+
 		for (const void* e = t + n; e > (const void*)t; ++s, ++t)
 		{
 			const unsigned sc = *s;
@@ -41,9 +42,11 @@ namespace Memfs::Utils {
 				else
 					return _wcsnicmp(s0, t0, n); // C9: compare the whole run, not from the current position
 			}
+
 			if (0 != (v = UpperChar(sc) - UpperChar(tc)) || !tc)
 				break;
 		}
+
 		return v;/*(0 < v) - (0 > v);*/
 	}
 

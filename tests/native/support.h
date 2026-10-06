@@ -12,6 +12,7 @@ MemFs::~MemFs() {
         FileNode* node = fileMap.begin()->second;
         fileMap.erase(fileMap.begin()); node->Dereference();
     }
+
     assert(sectors.GetAllocatedSectors() == 0); MEMFS_SINGLETON = nullptr;
 }
 SectorManager& MemFs::GetSectorManager() { return sectors; }

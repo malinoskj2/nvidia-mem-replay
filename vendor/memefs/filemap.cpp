@@ -124,6 +124,7 @@ std::pair<NTSTATUS, FileNode*> MemFs::InsertNode(FileNode* node) {
 #endif
 			}
 		}
+
 		if (!didInsert) {
 			// A3: the name is taken by another node. Returning it under STATUS_SUCCESS would
 			// hand the caller a handle to the wrong file and leak the node it wanted to insert.
@@ -146,6 +147,7 @@ std::pair<NTSTATUS, FileNode*> MemFs::InsertNode(FileNode&& node) {
 		if (!NT_SUCCESS(status)) {
 			return {status, nullptr};
 		}
+
 		allocatedNode.release(); // The successful insertion owns the map reference.
 		return {status, ptr};
 	} catch (const std::bad_alloc&) {
@@ -179,6 +181,7 @@ void MemFs::RemoveNode(FileNode& node, const bool reportDeletedSize) {
 		this->diagMapEpoch.fetch_add(1, std::memory_order_relaxed);
 #endif
 	}
+
 	this->TouchParent(node);
 	node.Dereference();
 }
@@ -205,10 +208,12 @@ class RenamePlan {
 			if (!Utils::FileNameHasPrefix(descendant->fileName.c_str(), (int)descendant->fileName.size(), node.fileName.c_str(), (int)oldLength, fileMap.key_comp().CaseInsensitive)) {
 				break;
 			}
+
 			const size_t suffixLength = descendant->fileName.size() - oldLength;
 			if (newFileName.size() >= MEMFS_MAX_PATH || suffixLength >= MEMFS_MAX_PATH - newFileName.size()) {
 				return STATUS_OBJECT_NAME_INVALID;
 			}
+
 			std::wstring name(newFileName);
 			name.append(descendant->fileName, oldLength, suffixLength);
 			if (!staged.emplace(name, descendant).second) {
@@ -222,9 +227,11 @@ class RenamePlan {
 
 	void StageReplacement(FileNodeMap& fileMap, FileNodeMap::iterator destination) {
 		replaced.push_back(destination);
+
 		// Replacing a main file also unlinks all its streams, including streams
 		// absent on the source. Open destination handles keep their own references.
 		if (!destination->second->IsMainNode()) return;
+
 		const std::wstring& destinationName = destination->second->fileName;
 		for (auto iter = std::next(destination); iter != fileMap.end(); ++iter) {
 			const std::wstring& name = iter->second->fileName;
@@ -245,6 +252,7 @@ class RenamePlan {
 			// same map entry. Reject overlapping trees before any iterator is erased.
 			if (!removedNodes.insert(entry->second).second) return STATUS_ACCESS_DENIED;
 		}
+
 		for (const auto& [name, descendant] : staged) {
 			const auto existing = fileMap.find(name);
 			if (existing == fileMap.end()) continue;
@@ -257,6 +265,7 @@ class RenamePlan {
 	void LockNodes() {
 		unlinked.reserve(replaced.size());
 		for (const auto& entry : replaced) unlinked.push_back(entry->second);
+
 		nodeLocks.reserve(changes.size());
 		for (const auto& change : changes) nodeLocks.emplace_back(change.entry->second->nodeMutex);
 	}
@@ -270,6 +279,7 @@ public:
 		if (source == fileMap.end() || source->second != &node) {
 			return STATUS_OBJECT_NAME_NOT_FOUND;
 		}
+
 		if (node.fileName == L"\\" ||
 			(newFileName.size() > node.fileName.size() &&
 			 Utils::FileNameHasPrefix(newFileName.data(), (int)newFileName.size(), node.fileName.c_str(), (int)node.fileName.size(), fileMap.key_comp().CaseInsensitive))) {
@@ -282,6 +292,7 @@ public:
 			if (!replaceIfExists) {
 				return STATUS_OBJECT_NAME_COLLISION;
 			}
+
 			if (destination->second->fileInfo.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
 				return STATUS_ACCESS_DENIED;
 			}
@@ -289,9 +300,12 @@ public:
 
 		const NTSTATUS stageStatus = StageChanges(fileMap, source, node, newFileName);
 		if (!NT_SUCCESS(stageStatus)) return stageStatus;
+
 		if (replace) StageReplacement(fileMap, destination);
+
 		const NTSTATUS collisionStatus = CheckCollisions(fileMap);
 		if (!NT_SUCCESS(collisionStatus)) return collisionStatus;
+
 		LockNodes();
 		return STATUS_SUCCESS;
 	}
@@ -299,10 +313,12 @@ public:
 	// No allocations: transfer the staged map nodes and existing map references.
 	void Commit(FileNodeMap& fileMap) {
 		for (const auto& entry : replaced) fileMap.erase(entry);
+
 		for (auto& change : changes) {
 			change.entry->second->fileName.swap(change.name);
 			fileMap.erase(change.entry);
 		}
+
 		while (!staged.empty()) fileMap.insert(staged.extract(staged.begin()));
 	}
 
@@ -323,6 +339,7 @@ NTSTATUS MemFs::RenameNode(FileNode& node, const std::wstring_view& newFileName,
 		RenamePlan plan(this->fileMap);
 		const NTSTATUS status = plan.Prepare(this->fileMap, node, newFileName, replaceIfExists);
 		if (!NT_SUCCESS(status)) return status;
+
 		const auto [parentStatus, oldParent] = this->FindParent(node.fileName);
 
 		{
@@ -334,6 +351,7 @@ NTSTATUS MemFs::RenameNode(FileNode& node, const std::wstring_view& newFileName,
 			this->diagMapEpoch.fetch_add(1, std::memory_order_relaxed);
 #endif
 		}
+
 		plan.UnlockNodes();
 		mapLock.unlock();
 		plan.ReleaseReplacedNodes();
@@ -345,8 +363,10 @@ NTSTATUS MemFs::RenameNode(FileNode& node, const std::wstring_view& newFileName,
 				std::unique_lock parentLock(parent.nodeMutex);
 				parent.fileInfo.LastAccessTime = parent.fileInfo.LastWriteTime = parent.fileInfo.ChangeTime = Utils::GetSystemTime();
 			}
+
 			this->TouchParent(node);
 		} catch (...) {}
+
 		return STATUS_SUCCESS;
 	} catch (const std::bad_alloc&) {
 		return STATUS_INSUFFICIENT_RESOURCES;
@@ -358,6 +378,7 @@ void MemFs::DiagReport() {
 	const ULONG wrongName = (ULONG)this->diagWrongNameRemovals.load(std::memory_order_relaxed);
 	const ULONG collisions = (ULONG)this->diagInsertCollisions.load(std::memory_order_relaxed);
 	const ULONG unlinkedCleanups = (ULONG)this->diagCleanupDeleteUnlinked.load(std::memory_order_relaxed);
+
 	FspDebugLog("memefs diagnostics: A1 wrong-name removals = %lu, A3 insert collisions = %lu, "
 	            "A4 cleanup-delete on unlinked node = %lu\n", wrongName, collisions, unlinkedCleanups);
 	FspServiceLog((wrongName | collisions | unlinkedCleanups) != 0 ? EVENTLOG_ERROR_TYPE : EVENTLOG_INFORMATION_TYPE,
@@ -369,11 +390,13 @@ void MemFs::DiagReport() {
 	const ULONG overlapped = (ULONG)this->diagOverlappedLookups.load(std::memory_order_relaxed);
 	const ULONG epoch = (ULONG)this->diagMapEpoch.load(std::memory_order_relaxed);
 	const ULONG useAfterFree = (ULONG)DiagNodeUseAfterFree.load(std::memory_order_relaxed);
+
 	FspDebugLog("memefs diagnostics: D0 uses of a destroyed FileNode = %lu\n", useAfterFree);
 	FspServiceLog(useAfterFree != 0 ? EVENTLOG_ERROR_TYPE : EVENTLOG_INFORMATION_TYPE,
 	              (PWSTR)L"memefs diagnostics: D0 uses of a destroyed FileNode = %lu", useAfterFree);
 
 	const ULONG maxInFlight = (ULONG)this->diagMaxLookupsInFlight.load();
+
 	FspDebugLog("memefs diagnostics: D2 map writes = %lu, lookups = %lu, overlapped with a map write = %lu, "
 	            "max concurrent lookups = %lu\n", epoch, lookups, overlapped, maxInFlight);
 	FspServiceLog(overlapped != 0 ? EVENTLOG_WARNING_TYPE : EVENTLOG_INFORMATION_TYPE,
@@ -434,6 +457,7 @@ std::vector<FileNode*> MemFs::EnumerateDirChildren(const FileNode& node, const w
 		markerKey = node.fileName;
 		if (needsSlash) markerKey += L'\\';
 		markerKey += marker;
+
 		iter = this->fileMap.upper_bound(markerKey);
 	} else {
 		iter = this->fileMap.upper_bound(node.fileName);

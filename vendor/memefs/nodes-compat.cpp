@@ -39,7 +39,6 @@ namespace Memfs {
 					return STATUS_DISK_FULL;
 				}
 
-
 				if (!memfs->GetSectorManager().ReAllocate(fileNode->GetSectorNode(), newSize)) {
 					return STATUS_INSUFFICIENT_RESOURCES;
 				}
@@ -70,6 +69,7 @@ namespace Memfs {
 					memset(fileNode->GetSectorNode().Sectors[static_cast<size_t>(offset / FULL_SECTOR_SIZE)]->Bytes + sectorOffset, 0, length);
 					offset += length;
 				}
+
 				fileNode->fileInfo.FileSize = newSize;
 			}
 		}
@@ -86,6 +86,7 @@ namespace Memfs {
 		const auto fileNodeOpt = memfs->FindFile(fileName);
 		if (!fileNodeOpt.has_value())
 			return STATUS_OBJECT_NAME_NOT_FOUND;
+
 		FileNode& fileNode = fileNodeOpt.value();
 
 		std::shared_lock lock(fileNode.nodeMutex);

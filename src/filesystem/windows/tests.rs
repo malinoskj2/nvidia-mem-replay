@@ -13,6 +13,7 @@ fn filesystem_cli_rejects_invalid_or_incomplete_configuration() {
         ])
         .is_ok()
     );
+
     for args in [
         vec!["replay", "filesystem"],
         vec![
