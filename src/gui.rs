@@ -10,6 +10,8 @@ use std::time::Duration;
 
 mod text;
 
+const DRIVE_SELECTOR_ID: &str = "drive";
+
 pub(crate) struct App {
     tray: Option<Tray>,
     tray_error: Option<String>,
@@ -50,7 +52,7 @@ impl App {
         } else {
             Color32::GRAY
         };
-        ui.label(RichText::new(format!("●  {}", status.message.as_str())).color(color));
+        ui.label(RichText::new(text::status(status.message.as_str())).color(color));
 
         show_metrics(ui, status);
 
@@ -82,9 +84,9 @@ impl App {
         ui.add_enabled_ui(!self.quitting, |ui| {
             ui.horizontal(|ui| {
                 let label = if status.mounted {
-                    "Stop and restore"
+                    text::STOP_AND_RESTORE
                 } else {
-                    "Retry / start"
+                    text::RETRY_START
                 };
                 if ui.button(label).clicked() {
                     if status.mounted {
@@ -93,7 +95,7 @@ impl App {
                         self.worker.start(self.config.clone());
                     }
                 }
-                if ui.button("Settings").clicked() {
+                if ui.button(text::SETTINGS).clicked() {
                     self.settings = !self.settings;
                 }
             });
@@ -107,19 +109,19 @@ impl App {
         ui.horizontal(|ui| {
             if let Some(tray) = &self.tray {
                 if ui
-                    .add_enabled(!self.quitting, egui::Button::new("Hide to tray"))
+                    .add_enabled(!self.quitting, egui::Button::new(text::HIDE_TO_TRAY))
                     .clicked()
                 {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                 }
                 if ui
-                    .add_enabled(!self.quitting, egui::Button::new("Quit"))
+                    .add_enabled(!self.quitting, egui::Button::new(text::QUIT))
                     .clicked()
                 {
                     tray.quit(ctx);
                 }
             } else if ui
-                .add_enabled(!self.quitting, egui::Button::new("Quit"))
+                .add_enabled(!self.quitting, egui::Button::new(text::QUIT))
                 .clicked()
             {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -144,10 +146,10 @@ impl App {
 
         ui.label(text::SHUTDOWN_FAILED_HELP);
         ui.horizontal(|ui| {
-            if ui.button("Retry shutdown").clicked() {
+            if ui.button(text::RETRY_SHUTDOWN).clicked() {
                 self.worker.shutdown();
             }
-            if ui.button("Exit anyway").clicked() {
+            if ui.button(text::EXIT_ANYWAY).clicked() {
                 self.worker.exit();
                 self.exit_ready = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -160,13 +162,13 @@ impl App {
             return;
         }
 
-        egui::Window::new("RAM storage settings")
+        egui::Window::new(text::SETTINGS_TITLE)
             .open(&mut self.settings)
             .show(ctx, |ui| {
                 show_storage_settings(ui, &mut self.config);
 
                 ui.label(text::RESTART_NOTICE);
-                if ui.button("Apply and restart").clicked() {
+                if ui.button(text::APPLY_AND_RESTART).clicked() {
                     self.worker.start(self.config.clone());
                 }
             });
@@ -222,15 +224,13 @@ fn show_metrics(ui: &mut egui::Ui, status: &Status) {
     ui.horizontal(|ui| {
         metric(
             ui,
-            "Written · lifetime",
-            &format!("{:.3} GB", status.lifetime_bytes as f64 / 1e9),
+            text::LIFETIME_WRITES,
+            &text::lifetime_written(status.lifetime_bytes),
         );
         ui.add_space(24.0);
-        let allocated = status.sample.as_ref().map_or_else(
-            || "— MB".to_owned(),
-            |sample| format!("{:.1} MB", sample.buffer_bytes as f64 / 1e6),
-        );
-        metric(ui, "Buffer allocated", &allocated);
+        let allocated =
+            text::buffer_allocated(status.sample.as_ref().map(|sample| sample.buffer_bytes));
+        metric(ui, text::ALLOCATED_BUFFER, &allocated);
     });
 }
 
@@ -251,12 +251,12 @@ fn show_memory_status(ui: &mut egui::Ui, sample: &Sample, limit: u64) {
 fn show_location(ui: &mut egui::Ui, status: &Status, limit: u64) {
     ui.add_space(16.0);
     if let Some(path) = &status.original_path {
-        ui.small(format!("Detected: {path}"));
+        ui.small(text::original_location(path));
     }
     if let Some(path) = &status.target {
-        ui.small(format!("RAM temporary files: {path}"));
+        ui.small(text::ram_location(path));
     }
-    ui.small(format!("Buffer ceiling: {} MB", limit / 1_000_000));
+    ui.small(text::buffer_ceiling(limit));
     ui.add_space(8.0);
     ui.label(text::RECORDING_HELP);
 }
@@ -274,15 +274,15 @@ fn show_notices(ui: &mut egui::Ui, status: &Status) {
 
 fn show_storage_settings(ui: &mut egui::Ui, config: &mut Config) {
     ui.horizontal(|ui| {
-        ui.label("Drive");
-        egui::ComboBox::from_id_salt("drive")
-            .selected_text(format!("{}:", config.drive))
+        ui.label(text::DRIVE);
+        egui::ComboBox::from_id_salt(DRIVE_SELECTOR_ID)
+            .selected_text(text::drive(config.drive))
             .show_ui(ui, |ui| {
                 for letter in MIN_DRIVE..=MAX_DRIVE {
-                    ui.selectable_value(&mut config.drive, letter, format!("{letter}:"));
+                    ui.selectable_value(&mut config.drive, letter, text::drive(letter));
                 }
             });
-        ui.label("Ceiling (MB)");
+        ui.label(text::MEMORY_CEILING);
         ui.add(
             egui::DragValue::new(&mut config.memory_limit_mb)
                 .range(MIN_MEMORY_LIMIT_MB..=MAX_MEMORY_LIMIT_MB),
