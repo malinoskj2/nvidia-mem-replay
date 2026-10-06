@@ -132,3 +132,42 @@ capacity failure, owner EOF restoration and unmount.
 Native Windows installation, NVIDIA recording, replay saving, tray controls,
 crash recovery and capacity behavior still require testing on a Windows NVIDIA
 machine.
+
+## Verified builds and optional releases
+
+The **Check** workflow builds the Windows package after the Rust and native
+checks pass. Its `replay-in-ram-windows-x64` artifact contains the installer,
+a ZIP of the complete distribution (including dependency sources and licenses),
+and checksums. Successful push builds automatically receive GitHub build
+attestations for all three files. Pull-request builds are downloadable but are
+not attested or eligible for release promotion.
+
+No release is created automatically. To promote a build you have tested:
+
+1. Open its successful **Check** run on GitHub and copy the numeric run ID from
+   the URL (`.../actions/runs/123456789`).
+2. Open **Actions → Draft release from build → Run workflow**. Supply that run ID
+   and a new version tag such as `v0.1.0`.
+3. The workflow downloads the existing build, verifies each asset's attestation
+   against this repository, the Check workflow and its source commit, then tags
+   that commit and creates a draft release. It does not rebuild the installer.
+4. Review the draft under **Releases**, edit the notes or mark a prerelease as
+   appropriate, and publish when ready.
+
+The promotion workflow must be present on the repository's default branch.
+Choose a run made after attestation was enabled, while its artifact is still
+available (requested retention: 90 days, subject to repository policy).
+Existing tags are never overwritten. If draft creation fails after tagging,
+the tag remains; finish that release manually rather than moving the tag.
+
+Release notes include a verification command tied to the exact build commit.
+For a repository-level check, replace `OWNER/REPO` below with the GitHub repository:
+
+```sh
+gh attestation verify replay-in-ram-setup-x64.exe --repo OWNER/REPO --signer-workflow OWNER/REPO/.github/workflows/check.yml
+```
+
+Attestations establish GitHub Actions build provenance; they do not establish
+independently reproducible builds or provide Windows publisher code signing.
+GitHub supports attestations for public repositories on current plans; private
+repositories require Enterprise Cloud. No personal signing key is required.

@@ -1,5 +1,8 @@
 name: Check
 on: [push, pull_request]
+permissions:
+  contents: read
+
 jobs:
   native-regressions:
     runs-on: ubuntu-latest
@@ -20,6 +23,7 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
   windows-package:
+    needs: [rust, native-regressions]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +31,37 @@ jobs:
       - run: choco install nsis -y --no-progress
       - run: ./scripts/build-windows.ps1
         shell: pwsh
+      - name: Prepare downloadable build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory release | Out-Null
+          Compress-Archive -Path dist/* -DestinationPath release/replay-in-ram-windows-x64.zip
+          Copy-Item dist/replay-in-ram-setup-x64.exe release/
+
+          Get-ChildItem release -File | Sort-Object Name | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Set-Content release/SHA256SUMS.txt -Encoding utf8
       - uses: actions/upload-artifact@v4
         with:
           name: replay-in-ram-windows-x64
-          path: dist/
+          path: release/
+          if-no-files-found: error
+          retention-days: 90
+
+  attest:
+    needs: windows-package
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: replay-in-ram-windows-x64
+          path: release/
+      - name: Attest installer, distribution bundle and checksums
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: release/*
