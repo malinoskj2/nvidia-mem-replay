@@ -5,7 +5,7 @@ use crate::{
         helper::Helper,
         nvidia::{self, Redirect},
     },
-    telemetry::{Meter, Sample, TELEMETRY_TIMEOUT},
+    telemetry::{Meter, Sample},
 };
 use anyhow::{Context, Result};
 use std::fmt::Write as _;
@@ -191,7 +191,6 @@ struct Session {
     redirect: Redirect,
     meter: Meter,
     sample: Option<Sample>,
-    last_sample: Instant,
     checkpoint: Instant,
     stopping: bool,
 }
@@ -413,7 +412,6 @@ fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {
         redirect,
         meter: Meter::new(state.accounting.total),
         sample: None,
-        last_sample: now,
         checkpoint: now,
         stopping: false,
     });
@@ -430,12 +428,7 @@ fn poll(
     let now = Instant::now();
     if let Some(sample) = session.helper.sample()? {
         accounting.observe(&mut session.meter, &sample, now)?;
-        session.last_sample = now;
         session.sample = Some(sample);
-    }
-
-    if now.duration_since(session.last_sample) > TELEMETRY_TIMEOUT {
-        anyhow::bail!("RAM helper telemetry is stale");
     }
 
     *message = if session.meter.active(now) {

@@ -58,8 +58,6 @@ pub(super) fn dispatch() -> Result<bool> {
 }
 
 fn run(config: &Config) -> Result<()> {
-    config.validate()?;
-
     let redirect = super::read_redirect(&mut io::stdin().lock(), config)?;
     let mut filesystem = Helper::start_memefs(config).context("start bundled MemFS Extended")?;
 

@@ -223,7 +223,7 @@ void FileNode::SetEa(PFILE_FULL_EA_INFORMATION ea) {
 		eaMap.erase(p); // Now, here the old ea is hopefully freed
 	}
 
-	if (0 != ea->EaValueLength && fileNodeEaDynamic.HoldsStruct()) {
+	if (0 != ea->EaValueLength) {
 		try {
 			eaMap.insert(FileNodeEaMap::value_type(fileNodeEa->EaName, std::move(fileNodeEaDynamic)));
 		} catch (...) {

@@ -299,7 +299,6 @@ fn poll_keeps_live_helper_and_session_when_lifetime_checkpoint_fails() {
         redirect: redirect(),
         meter: Meter::new(100),
         sample: None,
-        last_sample: now,
         checkpoint: now.checked_sub(Duration::from_secs(10)).unwrap(),
         stopping: false,
     };

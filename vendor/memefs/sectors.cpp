@@ -94,7 +94,7 @@ bool SectorManager::ReadWrite(SectorNode& node, void* buffer, const size_t size,
 	// sector was missing, and still reported success.
 	const UINT64 sectorEnd = (offset + size - 1) / FULL_SECTOR_SIZE;
 
-	if (offsetSectorBegin >= sectorCount || sectorEnd >= sectorCount || offsetOffset > FULL_SECTOR_SIZE) {
+	if (offsetSectorBegin >= sectorCount || sectorEnd >= sectorCount) {
 		return false;
 	}
 
