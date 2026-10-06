@@ -39,7 +39,3 @@ Built on the work of these projects and their contributors:
 
 - **[WinFsp](https://github.com/winfsp/winfsp)** — the Windows filesystem driver that makes the RAM drive possible.
 - **[WinFsp-MemFs-Extended](https://github.com/Ceiridge/WinFsp-MemFs-Extended)** by **Ceiridge** — the dynamically allocated RAM filesystem behind this app.
-
-Also thanks to **eframe/egui**, **tray-icon**, **Serde**, **clap**, **winreg**, **anyhow**, and **thiserror**. See [Cargo.toml](Cargo.toml) for dependencies and [upstream notes](vendor/UPSTREAM.md) for the native components.
-
-[Developer guide](DEVELOPMENT.md) · [License](LICENSE)
