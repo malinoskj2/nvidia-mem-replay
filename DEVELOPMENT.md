@@ -29,6 +29,8 @@ Closing keeps recording active. Left-click the tray icon to reopen. The menu
 provides Show, Stop and restore, and Quit. Stop and Quit restore NVIDIA's original
 temporary path before unmounting and discarding RAM. If the tray cannot be
 created, closing exits and the GUI explains the fallback.
+Tray actions show the native window directly before queuing GUI commands, since
+a hidden Windows window cannot repaint to process those commands.
 Quit waits for cleanup to finish. If cleanup fails, the window shows the error
 and offers **Retry shutdown** or **Exit anyway**. A failed restoration keeps its
 recovery journal for the next launch; the original path can also be restored
@@ -129,9 +131,11 @@ With Instant Replay off on a Windows NVIDIA machine, run
 `./scripts/smoke-windows.ps1` after installation. It checks mount, overwrite
 accounting, deletion, truncate/extend clearing, alternate-stream replacement,
 capacity failure, owner EOF restoration and unmount.
-Native Windows installation, NVIDIA recording, replay saving, tray controls,
-crash recovery and capacity behavior still require testing on a Windows NVIDIA
-machine.
+Installation, filesystem behavior, tray controls and recovery can also be tested
+in a Windows VM with a synthetic `TempFilePath` setting. The GUI requires OpenGL
+2.0+, so a VM with only a basic display adapter needs a software renderer for
+GUI testing. NVIDIA recording, overlay setting reloads and actual replay saving
+still require a Windows NVIDIA machine.
 
 ## Verified builds and optional releases
 

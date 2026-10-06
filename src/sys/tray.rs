@@ -127,6 +127,16 @@ fn register_icon_handler(ctx: &Context) {
 }
 
 fn show_window(ctx: &Context) {
+    // Hidden Windows windows cannot repaint to process queued viewport commands.
+    let _ = winsafe::EnumThreadWindows(winsafe::GetCurrentThreadId(), |window| {
+        if window.GetWindowText().is_ok_and(|title| title == APP_NAME) {
+            window.ShowWindow(winsafe::co::SW::RESTORE);
+            let _ = window.SetForegroundWindow();
+            return false;
+        }
+
+        true
+    });
     ctx.send_viewport_cmd(ViewportCommand::Visible(true));
     ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
     ctx.send_viewport_cmd(ViewportCommand::Focus);

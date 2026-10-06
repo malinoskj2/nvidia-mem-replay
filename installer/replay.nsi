@@ -3,13 +3,13 @@ Unicode true
 !include "x64.nsh"
 !include "FileFunc.nsh"
 Name "Replay in RAM"
-OutFile "../dist/nvidia-capture-in-ram-x64.exe"
+OutFile "..\dist\nvidia-capture-in-ram-x64.exe"
 InstallDir "$PROGRAMFILES64\Replay in RAM"
 RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 !define MUI_ABORTWARNING
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_LICENSE "../LICENSE"
+!insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -31,7 +31,7 @@ Section "Replay in RAM"
   # Install the official signed WinFsp package, keeping compatible shared installs.
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
-  File "../dist/winfsp-2.1.25156.msi"
+  File "..\dist\winfsp-2.1.25156.msi"
 
   SetRegView 32
   ReadRegStr $4 HKLM "Software\WinFsp" "InstallDir"
@@ -58,17 +58,17 @@ Section "Replay in RAM"
 
   driver_ready:
   SetOutPath "$INSTDIR"
-  File "../dist/nvidia-mem-replay.exe"
-  File "../dist/memefs-x64.exe"
-  File "../dist/README.md"
-  File "../dist/DEVELOPMENT.md"
-  File "../dist/LICENSE"
+  File "..\dist\nvidia-mem-replay.exe"
+  File "..\dist\memefs-x64.exe"
+  File "..\dist\README.md"
+  File "..\dist\DEVELOPMENT.md"
+  File "..\dist\LICENSE"
 
   SetOutPath "$INSTDIR\licenses"
-  File "../dist/licenses/*"
+  File "..\dist\licenses\*"
 
   SetOutPath "$INSTDIR\source"
-  File "../dist/source/*"
+  File "..\dist\source\*"
   SetOutPath "$INSTDIR"
 
   WriteUninstaller "$INSTDIR\uninstall.exe"

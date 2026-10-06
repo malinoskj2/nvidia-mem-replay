@@ -50,7 +50,7 @@ try {
     if ($baseline.version -ne 1) { throw 'Wrong telemetry version.' }
     if (!(Test-Path -LiteralPath $target -PathType Container)) { throw 'Helper reported readiness without creating its recording directory.' }
 
-    $replacement = if ($kind -eq 'Binary') { [Text.Encoding]::Unicode.GetBytes($target + [char]0) } else { $target }
+    $replacement = if ($kind -eq 'Binary') { ,([Text.Encoding]::Unicode.GetBytes($target + [char]0)) } else { $target }
     $key.SetValue('TempFilePath', $replacement, $kind)
     $key.Flush()
 

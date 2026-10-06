@@ -278,7 +278,9 @@ fn show_location(ui: &mut egui::Ui, status: &Status, limit: u64) {
 }
 
 fn show_notices(ui: &mut egui::Ui, status: &Status) {
-    if let Some(warning) = &status.warning {
+    if status.mounted
+        && let Some(warning) = &status.warning
+    {
         ui.add_space(8.0);
         ui.colored_label(Color32::YELLOW, warning);
     }
