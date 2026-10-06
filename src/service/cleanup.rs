@@ -1,4 +1,4 @@
-use super::{DisplayStatus, Shutdown, State};
+use super::{DisplayStatus, Shutdown, State, text};
 use crate::{
     storage::Store,
     sys::{
@@ -63,11 +63,9 @@ pub(super) fn stop_with(
     let Some(mut running) = state.session.take() else {
         let (restoration, journal) = match store.redirect() {
             Ok(Some(redirect)) => {
-                let restoration = restore(&redirect).context("recover NVIDIA's original temporary location; retry restoration or set Temporary files to a persistent drive in Alt+Z");
+                let restoration = restore(&redirect).context(text::RECOVER_TEMP_PATH);
                 let journal = if restoration.is_ok() {
-                    store
-                        .clear_redirect()
-                        .context("clear redirect recovery journal")
+                    store.clear_redirect().context(text::CLEAR_REDIRECT_JOURNAL)
                 } else {
                     Ok(())
                 };
@@ -75,7 +73,7 @@ pub(super) fn stop_with(
                 (restoration, journal)
             }
             Ok(None) => (Ok(()), Ok(())),
-            Err(error) => (Err(error).context("read redirect recovery journal"), Ok(())),
+            Err(error) => (Err(error).context(text::READ_REDIRECT_JOURNAL), Ok(())),
         };
 
         let report = CleanupReport {
@@ -94,7 +92,7 @@ pub(super) fn stop_with(
     };
 
     // Restore before unmounting; retain the journal if restoration or exit fails.
-    let restoration = restore(&running.redirect).context("restore NVIDIA temporary path; retry restoration or set Temporary files to a persistent drive in Alt+Z");
+    let restoration = restore(&running.redirect).context(text::RESTORE_TEMP_PATH);
     let stopped = running.helper.stop();
     let exited = stopped.exited;
     let report = finish_stop(store, &mut running.meter, state, restoration, stopped);
@@ -131,9 +129,7 @@ pub(super) fn finish_stop(
     };
     let persistence = state.accounting.persist(store);
     let journal = if restoration.is_ok() && stopped.exited {
-        store
-            .clear_redirect()
-            .context("clear redirect recovery journal")
+        store.clear_redirect().context(text::CLEAR_REDIRECT_JOURNAL)
     } else {
         Ok(())
     };

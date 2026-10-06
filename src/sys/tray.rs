@@ -1,3 +1,4 @@
+use crate::APP_NAME;
 use eframe::egui::{Context, ViewportCommand};
 use std::sync::{
     Arc,
@@ -32,14 +33,14 @@ impl Tray {
         stop: impl Fn() + Send + Sync + 'static,
     ) -> Result<Self, TrayError> {
         let menu = Menu::new();
-        let show = MenuItem::new("Show Replay in RAM", true, None);
+        let show = MenuItem::new(format!("Show {APP_NAME}"), true, None);
         let stop_item = MenuItem::new("Stop and restore temporary path", true, None);
         let quit = MenuItem::new("Quit", true, None);
         menu.append_items(&[&show, &stop_item, &quit])?;
 
         let icon = TrayIconBuilder::new()
             .with_icon(replay_icon()?)
-            .with_tooltip("Replay in RAM · click to open")
+            .with_tooltip(format!("{APP_NAME} · click to open"))
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
             .build()?;

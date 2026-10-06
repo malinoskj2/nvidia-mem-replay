@@ -9,6 +9,12 @@ mod storage;
 mod sys;
 mod telemetry;
 
+pub(crate) const APP_NAME: &str = "Replay in RAM";
+
+#[cfg(not(windows))]
+const UNSUPPORTED_PLATFORM_MESSAGE: &str =
+    "Replay in RAM requires Windows x64, NVIDIA overlay, and WinFsp";
+
 #[cfg(any(windows, test))]
 use anyhow::Context;
 use anyhow::Result;
@@ -31,14 +37,14 @@ pub fn run() -> Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("Replay in RAM")
+            .with_title(APP_NAME)
             .with_inner_size([460.0, 470.0])
             .with_min_inner_size([420.0, 420.0]),
         ..Default::default()
     };
 
     eframe::run_native(
-        "Replay in RAM",
+        APP_NAME,
         options,
         Box::new(move |cc| match startup {
             Ok((worker, config)) => Ok(Box::new(gui::App::new(cc, worker, config))),
@@ -51,7 +57,7 @@ pub fn run() -> Result<()> {
 /// The recording application is available on Windows only.
 #[cfg(not(windows))]
 pub fn run() -> Result<()> {
-    anyhow::bail!("Replay in RAM requires Windows x64, NVIDIA overlay, and WinFsp")
+    anyhow::bail!(UNSUPPORTED_PLATFORM_MESSAGE)
 }
 
 // Recovery is independent of parsing configuration or lifetime state.

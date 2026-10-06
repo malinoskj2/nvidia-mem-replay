@@ -19,6 +19,9 @@ const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const RECOVERY_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const FORCED_TERMINATION_TIMEOUT: Duration = Duration::from_secs(1);
 const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const MEMEFS_EXECUTABLE: &str = "memefs-x64.exe";
+const STOP_COMMAND: &[u8] = b"stop\n";
+const TELEMETRY_LOCK_FAILED: &str = "telemetry lock failed";
 
 #[derive(Debug, Error)]
 pub(crate) enum HelperError {
@@ -98,7 +101,7 @@ impl Helper {
     #[cfg(windows)]
     pub(crate) fn start_memefs(config: &Config) -> Result<Self, HelperError> {
         use std::os::windows::process::CommandExt;
-        let executable = std::env::current_exe()?.with_file_name("memefs-x64.exe");
+        let executable = std::env::current_exe()?.with_file_name(MEMEFS_EXECUTABLE);
         let mut command = Command::new(executable);
         command
             .args([
@@ -198,7 +201,7 @@ impl Helper {
         let inbox = self
             .inbox
             .lock()
-            .map_err(|_| HelperError::Telemetry("telemetry lock failed".to_owned()))?;
+            .map_err(|_| HelperError::Telemetry(TELEMETRY_LOCK_FAILED.to_owned()))?;
         if let Some(error) = &inbox.error {
             return Err(HelperError::Telemetry(error.clone()));
         }
@@ -232,7 +235,7 @@ impl Helper {
             }
             Err(_) => (
                 None,
-                Err(HelperError::Telemetry("telemetry lock failed".to_owned())),
+                Err(HelperError::Telemetry(TELEMETRY_LOCK_FAILED.to_owned())),
             ),
         };
 
@@ -251,7 +254,7 @@ impl Helper {
 
     fn stop_process(&mut self) -> Result<(), HelperError> {
         if let Some(mut input) = self.input.take() {
-            let _ = input.write_all(b"stop\n");
+            let _ = input.write_all(STOP_COMMAND);
         }
 
         let mut deadline = Instant::now() + self.shutdown_timeout;

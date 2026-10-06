@@ -6,6 +6,10 @@ use anyhow::{Context, Result};
 use std::time::{Duration, Instant};
 
 const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(10);
+const CHECKPOINT_WARNING: &str =
+    "Lifetime counter could not be saved; RAM recording continues. Retrying in 10 seconds";
+const SAVE_LIFETIME_CONTEXT: &str =
+    "save lifetime write counter; check application state directory access and retry";
 
 #[derive(Default)]
 pub(super) struct Accounting {
@@ -44,17 +48,15 @@ impl Accounting {
         // Retry failures at the same bounded cadence while recording continues.
         *last_attempt = now;
         if let Err(error) = self.persist(store) {
-            self.warning = Some(format!(
-                "Lifetime counter could not be saved; RAM recording continues. Retrying in 10 seconds: {error:#}"
-            ));
+            self.warning = Some(format!("{CHECKPOINT_WARNING}: {error:#}"));
         }
     }
 
     pub(super) fn persist(&mut self, store: &Store) -> Result<()> {
         if self.dirty {
-            store.save_lifetime(self.total).context(
-                "save lifetime write counter; check application state directory access and retry",
-            )?;
+            store
+                .save_lifetime(self.total)
+                .context(SAVE_LIFETIME_CONTEXT)?;
             self.dirty = false;
             self.warning = None;
         }

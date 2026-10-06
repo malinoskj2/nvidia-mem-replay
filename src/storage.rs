@@ -8,6 +8,13 @@ use std::{
 use thiserror::Error;
 
 const MAX_STATE_BYTES: usize = 64 * 1024;
+const STATE_DIRECTORY_ENV: &str = "LOCALAPPDATA";
+const STATE_DIRECTORY: &str = "NvidiaMemReplay";
+const INSTANCE_LOCK_FILE: &str = "instance.lock";
+const CONFIG_FILE: &str = "config.json";
+const LIFETIME_FILE: &str = "lifetime.json";
+const REDIRECT_FILE: &str = "redirect.json";
+const PENDING_EXTENSION: &str = "pending";
 
 #[derive(Debug, Error)]
 pub(crate) enum StorageError {
@@ -30,10 +37,10 @@ pub(crate) struct Store {
 
 impl Store {
     pub(crate) fn open() -> Result<Self, StorageError> {
-        let root = std::env::var_os("LOCALAPPDATA")
+        let root = std::env::var_os(STATE_DIRECTORY_ENV)
             .map(PathBuf::from)
             .ok_or(StorageError::NoDirectory)?
-            .join("NvidiaMemReplay");
+            .join(STATE_DIRECTORY);
         Self::at(root)
     }
 
@@ -44,38 +51,38 @@ impl Store {
             .truncate(false)
             .read(true)
             .write(true)
-            .open(root.join("instance.lock"))?;
+            .open(root.join(INSTANCE_LOCK_FILE))?;
         lock.try_lock().map_err(|_| StorageError::Locked)?;
 
         Ok(Self { root, lock })
     }
 
     pub(crate) fn load_config(&self) -> Result<Config, StorageError> {
-        Ok(self.read("config.json")?.unwrap_or_default())
+        Ok(self.read(CONFIG_FILE)?.unwrap_or_default())
     }
 
     pub(crate) fn save_config(&self, config: &Config) -> Result<(), StorageError> {
-        self.write("config.json", config)
+        self.write(CONFIG_FILE, config)
     }
 
     pub(crate) fn lifetime(&self) -> Result<u64, StorageError> {
-        Ok(self.read("lifetime.json")?.unwrap_or(0))
+        Ok(self.read(LIFETIME_FILE)?.unwrap_or(0))
     }
 
     pub(crate) fn save_lifetime(&self, bytes: u64) -> Result<(), StorageError> {
-        self.write("lifetime.json", &bytes)
+        self.write(LIFETIME_FILE, &bytes)
     }
 
     pub(crate) fn redirect(&self) -> Result<Option<Redirect>, StorageError> {
-        self.read("redirect.json")
+        self.read(REDIRECT_FILE)
     }
 
     pub(crate) fn save_redirect(&self, redirect: &Redirect) -> Result<(), StorageError> {
-        self.write("redirect.json", redirect)
+        self.write(REDIRECT_FILE, redirect)
     }
 
     pub(crate) fn clear_redirect(&self) -> Result<(), StorageError> {
-        match fs::remove_file(self.root.join("redirect.json")) {
+        match fs::remove_file(self.root.join(REDIRECT_FILE)) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error.into()),
@@ -118,7 +125,7 @@ impl Drop for Store {
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let temporary = path.with_extension("pending");
+    let temporary = path.with_extension(PENDING_EXTENSION);
     let mut file = OpenOptions::new()
         .create(true)
         .truncate(true)

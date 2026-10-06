@@ -20,6 +20,7 @@ use std::{
 
 mod accounting;
 mod cleanup;
+mod text;
 use accounting::Accounting;
 use cleanup::{complete_shutdown, stop};
 
@@ -364,11 +365,11 @@ pub(crate) fn recover_with(
     store: &Store,
     restore: impl FnOnce(&Redirect) -> Result<()>,
 ) -> Result<()> {
-    if let Some(redirect) = store.redirect().context("read redirect recovery journal")? {
-        restore(&redirect).context("recover NVIDIA's original temporary location; retry restoration or set Temporary files to a persistent drive in Alt+Z")?;
+    if let Some(redirect) = store.redirect().context(text::READ_REDIRECT_JOURNAL)? {
+        restore(&redirect).context(text::RECOVER_TEMP_PATH)?;
         store
             .clear_redirect()
-            .context("clear redirect recovery journal")?;
+            .context(text::CLEAR_REDIRECT_JOURNAL)?;
     }
 
     Ok(())

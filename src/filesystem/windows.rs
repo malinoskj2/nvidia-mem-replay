@@ -15,7 +15,7 @@ const TELEMETRY_REPORT_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_STOP_COMMAND_BYTES: u64 = 512;
 
 #[derive(Parser)]
-#[command(name = "Replay in RAM")]
+#[command(name = crate::APP_NAME)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Mode>,

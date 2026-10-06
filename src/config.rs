@@ -5,6 +5,7 @@ pub(crate) const MIN_DRIVE: char = 'D';
 pub(crate) const MAX_DRIVE: char = 'Z';
 pub(crate) const MIN_MEMORY_LIMIT_MB: u32 = 256;
 pub(crate) const MAX_MEMORY_LIMIT_MB: u32 = 65_536;
+const RECORDING_DIRECTORY: &str = "NVIDIA-Replay";
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Config {
@@ -78,7 +79,7 @@ impl Config {
     }
 
     pub(crate) fn target(&self) -> String {
-        format!("{}:\\NVIDIA-Replay", self.drive)
+        format!("{}:\\{RECORDING_DIRECTORY}", self.drive)
     }
 
     pub(crate) const fn limit_bytes(&self) -> u64 {

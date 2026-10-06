@@ -1,4 +1,5 @@
 use crate::{
+    APP_NAME,
     config::{Config, MAX_DRIVE, MAX_MEMORY_LIMIT_MB, MIN_DRIVE, MIN_MEMORY_LIMIT_MB},
     service::{Shutdown, Status, Worker},
     sys::tray::Tray,
@@ -6,6 +7,8 @@ use crate::{
 };
 use eframe::egui::{self, Color32, RichText};
 use std::time::Duration;
+
+mod text;
 
 pub(crate) struct App {
     tray: Option<Tray>,
@@ -22,10 +25,7 @@ impl App {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let (tray, tray_error) = match Tray::new(&cc.egui_ctx, worker.stop_handle()) {
             Ok(tray) => (Some(tray), None),
-            Err(error) => (
-                None,
-                Some(format!("Tray unavailable; closing will quit: {error}")),
-            ),
+            Err(error) => (None, Some(text::tray_unavailable(&error))),
         };
 
         Self {
@@ -41,8 +41,8 @@ impl App {
 
     fn show_status(&self, ui: &mut egui::Ui, status: &Status) {
         ui.add_space(10.0);
-        ui.heading("Replay in RAM");
-        ui.label("NVIDIA Instant Replay temporary storage");
+        ui.heading(APP_NAME);
+        ui.label(text::SUBTITLE);
         ui.add_space(16.0);
 
         let color = if status.active {
@@ -72,9 +72,9 @@ impl App {
         self.show_shutdown_controls(ui, ctx, status.shutdown);
 
         ui.small(if self.tray.is_some() {
-            "Closing hides to tray. Quit restores the path and discards the buffer."
+            text::CLOSE_WITH_TRAY
         } else {
-            "Closing restores the path and discards the RAM buffer."
+            text::CLOSE_WITHOUT_TRAY
         });
     }
 
@@ -138,11 +138,11 @@ impl App {
         }
 
         if shutdown != Shutdown::Failed {
-            ui.label("Restoring the temporary path and stopping RAM storage…");
+            ui.label(text::SHUTDOWN_PENDING);
             return;
         }
 
-        ui.label("Resolve the error and retry. If restoration failed, the recovery journal is kept for the next launch; you can also set Temporary files to a persistent drive in Alt+Z.");
+        ui.label(text::SHUTDOWN_FAILED_HELP);
         ui.horizontal(|ui| {
             if ui.button("Retry shutdown").clicked() {
                 self.worker.shutdown();
@@ -165,7 +165,7 @@ impl App {
             .show(ctx, |ui| {
                 show_storage_settings(ui, &mut self.config);
 
-                ui.label("Save any wanted replay first; restarting discards the current buffer.");
+                ui.label(text::RESTART_NOTICE);
                 if ui.button("Apply and restart").clicked() {
                     self.worker.start(self.config.clone());
                 }
@@ -236,25 +236,15 @@ fn show_metrics(ui: &mut egui::Ui, status: &Status) {
 
 fn show_memory_status(ui: &mut egui::Ui, sample: &Sample, limit: u64) {
     ui.add_space(10.0);
-    let resident = sample.resident_bytes.map_or_else(
-        || "unavailable".to_owned(),
-        |bytes| format!("{:.1} MB", bytes as f64 / 1e6),
-    );
-    ui.small(format!(
-        "Filesystem process RAM: {resident} · System available: {:.0} MB",
-        sample.available_bytes as f64 / 1e6
+    ui.small(text::memory_summary(
+        sample.resident_bytes,
+        sample.available_bytes,
     ));
     if sample.available_bytes < 1_000_000_000 {
-        ui.colored_label(
-            Color32::YELLOW,
-            "System memory is low. Reduce replay length or bitrate.",
-        );
+        ui.colored_label(Color32::YELLOW, text::LOW_MEMORY_WARNING);
     }
     if sample.buffer_bytes > limit * 9 / 10 {
-        ui.colored_label(
-            Color32::YELLOW,
-            "Near the memory ceiling. Recording may stop if the buffer fills.",
-        );
+        ui.colored_label(Color32::YELLOW, text::BUFFER_LIMIT_WARNING);
     }
 }
 
@@ -268,7 +258,7 @@ fn show_location(ui: &mut egui::Ui, status: &Status, limit: u64) {
     }
     ui.small(format!("Buffer ceiling: {} MB", limit / 1_000_000));
     ui.add_space(8.0);
-    ui.label("If writes do not start, toggle Instant Replay off/on in Alt+Z. Keep Gallery on a persistent drive.");
+    ui.label(text::RECORDING_HELP);
 }
 
 fn show_notices(ui: &mut egui::Ui, status: &Status) {
@@ -312,9 +302,9 @@ pub(crate) struct StartupError(pub(crate) String);
 impl eframe::App for StartupError {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Replay in RAM could not start");
+            ui.heading(text::STARTUP_FAILED_TITLE);
             ui.label(&self.0);
-            ui.label("Close this window, resolve the error, then launch again.");
+            ui.label(text::STARTUP_FAILED_HELP);
         });
     }
 }

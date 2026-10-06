@@ -136,7 +136,10 @@ pub(crate) fn restore(redirect: &Redirect) -> Result<(), NvidiaError> {
 }
 
 #[cfg(windows)]
-const KEY: &str = r"Software\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS";
+const REGISTRY_KEY: &str = r"Software\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS";
+
+#[cfg(windows)]
+const TEMP_PATH_VALUE: &str = "TempFilePath";
 
 #[cfg(windows)]
 fn read() -> Result<RawValue, NvidiaError> {
@@ -146,9 +149,9 @@ fn read() -> Result<RawValue, NvidiaError> {
     };
 
     let key = RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey_with_flags(KEY, KEY_READ | KEY_WOW64_64KEY)
+        .open_subkey_with_flags(REGISTRY_KEY, KEY_READ | KEY_WOW64_64KEY)
         .map_err(registry_error)?;
-    let value = key.get_raw_value("TempFilePath").map_err(registry_error)?;
+    let value = key.get_raw_value(TEMP_PATH_VALUE).map_err(registry_error)?;
 
     Ok(RawValue {
         kind: value.vtype as u32,
@@ -170,9 +173,9 @@ fn write(value: &RawValue) -> Result<(), NvidiaError> {
     };
 
     let key = RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey_with_flags(KEY, KEY_WRITE | KEY_WOW64_64KEY)?;
+        .open_subkey_with_flags(REGISTRY_KEY, KEY_WRITE | KEY_WOW64_64KEY)?;
     key.set_raw_value(
-        "TempFilePath",
+        TEMP_PATH_VALUE,
         &RegValue {
             vtype: kind,
             bytes: std::borrow::Cow::Borrowed(&value.bytes),
