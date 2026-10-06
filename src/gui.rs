@@ -178,18 +178,25 @@ impl App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
 
-        if ctx.input(|input| input.viewport().close_requested()) && !self.exit_ready {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            if !self.quitting && self.tray.as_ref().is_some_and(|tray| !tray.quitting()) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            } else if !self.quitting {
-                self.quitting = true;
-                self.settings = false;
-                self.worker.shutdown();
-                if let Some(tray) = &self.tray {
-                    tray.disable_recording_controls();
-                }
-            }
+        if !ctx.input(|input| input.viewport().close_requested()) || self.exit_ready {
+            return;
+        }
+
+        ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        if self.quitting {
+            return;
+        }
+
+        if self.tray.as_ref().is_some_and(|tray| !tray.quitting()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            return;
+        }
+
+        self.quitting = true;
+        self.settings = false;
+        self.worker.shutdown();
+        if let Some(tray) = &self.tray {
+            tray.disable_recording_controls();
         }
     }
 }

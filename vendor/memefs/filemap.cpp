@@ -105,7 +105,6 @@ bool MemFs::HasChild(const FileNode& node) {
 std::pair<NTSTATUS, FileNode*> MemFs::InsertNode(FileNode* node) {
 	try {
 		FileNode* resultNode;
-		bool didInsert;
 		{
 			std::unique_lock mapLock(this->fileMapMutex);
 #if MEMFS_DIAGNOSTICS
@@ -113,22 +112,18 @@ std::pair<NTSTATUS, FileNode*> MemFs::InsertNode(FileNode* node) {
 #endif
 			const auto [iter, success] = this->fileMap.emplace(node->fileName, node);
 			resultNode = iter->second;
-			didInsert = success;
 			if (!success) {
 				this->diagInsertCollisions.fetch_add(1, std::memory_order_relaxed);
 				FspDebugLog(__FUNCTION__ ": name collision - the name already belongs to another node\n");
-			} else {
-				iter->second->Reference();
-#if MEMFS_DIAGNOSTICS
-				this->diagMapEpoch.fetch_add(1);
-#endif
+				// A3: the name is taken by another node. Returning it under STATUS_SUCCESS would
+				// hand the caller a handle to the wrong file and leak the node it wanted to insert.
+				return {STATUS_OBJECT_NAME_COLLISION, resultNode};
 			}
-		}
 
-		if (!didInsert) {
-			// A3: the name is taken by another node. Returning it under STATUS_SUCCESS would
-			// hand the caller a handle to the wrong file and leak the node it wanted to insert.
-			return {STATUS_OBJECT_NAME_COLLISION, resultNode};
+			iter->second->Reference();
+#if MEMFS_DIAGNOSTICS
+			this->diagMapEpoch.fetch_add(1);
+#endif
 		}
 
 		// Publication succeeded. An advisory timestamp failure must not make the caller
@@ -202,6 +197,11 @@ class RenamePlan {
 
 	NTSTATUS StageChanges(FileNodeMap& fileMap, FileNodeMap::iterator source,
 		FileNode& node, std::wstring_view newFileName) {
+		if (newFileName.size() >= MEMFS_MAX_PATH) {
+			return STATUS_OBJECT_NAME_INVALID;
+		}
+
+		const size_t maxSuffixLength = MEMFS_MAX_PATH - newFileName.size();
 		const size_t oldLength = node.fileName.size();
 		for (auto iter = source; iter != fileMap.end(); ++iter) {
 			FileNode* descendant = iter->second;
@@ -210,7 +210,7 @@ class RenamePlan {
 			}
 
 			const size_t suffixLength = descendant->fileName.size() - oldLength;
-			if (newFileName.size() >= MEMFS_MAX_PATH || suffixLength >= MEMFS_MAX_PATH - newFileName.size()) {
+			if (suffixLength >= maxSuffixLength) {
 				return STATUS_OBJECT_NAME_INVALID;
 			}
 

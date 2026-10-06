@@ -250,9 +250,11 @@ fn run(
         ..State::default()
     };
 
-    if let Err(error) = initialize(store, &mut state) {
-        state.error = Some(format!("{error:#}"));
-    } else if let Err(error) = start(store, config, &mut state) {
+    let startup = initialize(store, &mut state).and_then(|()| {
+        config.validate()?;
+        start(store, config, &mut state)
+    });
+    if let Err(error) = startup {
         state.error = Some(format!("{error:#}"));
     }
     publish(output, &state);
@@ -391,8 +393,6 @@ fn initialize(store: &Store, state: &mut State) -> Result<()> {
 }
 
 fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {
-    config.validate()?;
-
     let redirect =
         nvidia::plan(config.target()).context("discover NVIDIA temporary files location")?;
     state.location = Some(redirect.clone());
