@@ -26,7 +26,7 @@ Copy-Item README.md, DEVELOPMENT.md, LICENSE dist\
 Copy-Item licenses\* dist\licenses\
 
 # Include complete dependency sources and notices with the GPL application source.
-$stage = Join-Path $cache 'replay-source'
+$stage = Join-Path $cache 'nvidia-mem-replay-source'
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
 $sourceFiles = @('src', 'tests', 'vendor', 'scripts', 'installer', 'licenses', '.cargo', 'Cargo.toml', 'Cargo.lock', 'LICENSE', 'README.md', 'DEVELOPMENT.md')
@@ -37,7 +37,7 @@ $vendorConfig = cargo vendor --locked --versioned-dirs $dependencies
 if ($LASTEXITCODE -ne 0) { throw 'Dependency source bundling failed' }
 $portableConfig = [regex]::Replace(($vendorConfig -join "`n"), '(?m)^directory = .+$', 'directory = "dependencies"')
 Add-Content -Path "$stage/.cargo/config.toml" -Value "`n$portableConfig" -Encoding utf8
-Compress-Archive -Path "$stage/*", "$stage/.cargo" -DestinationPath dist/source/replay-in-ram-source.zip -Force
+Compress-Archive -Path "$stage/*", "$stage/.cargo" -DestinationPath dist/source/nvidia-mem-replay-source.zip -Force
 
 if (!$SkipInstaller) {
     $nsis = Get-Command makensis -ErrorAction SilentlyContinue
@@ -46,7 +46,7 @@ if (!$SkipInstaller) {
         if (!(Test-Path $candidate)) { throw 'Install NSIS 3 to produce the installer, or pass -SkipInstaller.' }
         $compiler = $candidate
     } else { $compiler = $nsis.Source }
-    & $compiler /WX installer\replay.nsi
+    & $compiler /WX installer\nvidia-mem-replay.nsi
     if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
 }
 

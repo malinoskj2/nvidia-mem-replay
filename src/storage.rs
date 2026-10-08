@@ -24,7 +24,9 @@ pub(crate) enum StorageError {
     Json(#[from] serde_json::Error),
     #[error("application state is larger than 64 KB")]
     Oversized,
-    #[error("another Replay in RAM instance is running, or the state directory cannot be locked")]
+    #[error(
+        "another nvidia-mem-replay instance is running, or the state directory cannot be locked"
+    )]
     Locked,
     #[error("LOCALAPPDATA is unavailable")]
     NoDirectory,

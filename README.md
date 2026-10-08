@@ -1,4 +1,4 @@
-# Replay in RAM
+# nvidia-mem-replay
 
 ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4)
 ![NVIDIA Instant Replay](https://img.shields.io/badge/NVIDIA-Instant_Replay-76B900)
@@ -11,10 +11,10 @@ You need **64-bit Windows**, an **NVIDIA GPU**, and **Instant Replay** working i
 
 ## Get started
 
-1. Run **`nvidia-capture-in-ram-x64.exe`** from the Windows download. WinFsp is included; Windows may ask for admin access or a reboot.
+1. Run **`nvidia-mem-replay-setup-x64.exe`** from the Windows download. WinFsp is included; Windows may ask for admin access or a reboot.
 2. Open the NVIDIA overlay with **Alt+Z**. In **Settings → Files and disk space**, set **Temporary files** to a folder if you haven’t already.
 3. Keep **Gallery** on your SSD or hard drive. This is where your saved clips belong.
-4. Launch **Replay in RAM** from the Start menu. To change the drive or RAM limit, choose an unused letter and a limit in **Settings**, then click **Apply and restart**. The default limit is **8192 MB**; leave enough RAM for your game and Windows.
+4. Launch **nvidia-mem-replay** from the Start menu. To change the drive or RAM limit, choose an unused letter and a limit in **Settings**, then click **Apply and restart**. The default limit is **8192 MB**; leave enough RAM for your game and Windows.
 5. Switch **Instant Replay** off and on in **Alt+Z**, then save clips as usual.
 
 ## While you play

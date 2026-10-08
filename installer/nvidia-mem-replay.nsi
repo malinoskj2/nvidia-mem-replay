@@ -2,9 +2,9 @@ Unicode true
 !include "MUI2.nsh"
 !include "x64.nsh"
 !include "FileFunc.nsh"
-Name "Replay in RAM"
-OutFile "..\dist\nvidia-capture-in-ram-x64.exe"
-InstallDir "$PROGRAMFILES64\Replay in RAM"
+Name "nvidia-mem-replay"
+OutFile "..\dist\nvidia-mem-replay-setup-x64.exe"
+InstallDir "$PROGRAMFILES64\nvidia-mem-replay"
 RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 !define MUI_ABORTWARNING
@@ -19,7 +19,7 @@ SetCompressor /SOLID lzma
 
 Function .onInit
   ${IfNot} ${RunningX64}
-    MessageBox MB_ICONSTOP "Replay in RAM requires 64-bit Windows."
+    MessageBox MB_ICONSTOP "nvidia-mem-replay requires 64-bit Windows."
     Abort
   ${EndIf}
 
@@ -27,7 +27,7 @@ Function .onInit
   SetShellVarContext all
 FunctionEnd
 
-Section "Replay in RAM"
+Section "nvidia-mem-replay"
   # Install the official signed WinFsp package, keeping compatible shared installs.
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
@@ -72,21 +72,21 @@ Section "Replay in RAM"
   SetOutPath "$INSTDIR"
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
-  CreateDirectory "$SMPROGRAMS\Replay in RAM"
-  CreateShortcut "$SMPROGRAMS\Replay in RAM\Replay in RAM.lnk" "$INSTDIR\nvidia-mem-replay.exe"
-  CreateShortcut "$SMPROGRAMS\Replay in RAM\Uninstall.lnk" "$INSTDIR\uninstall.exe"
+  CreateDirectory "$SMPROGRAMS\nvidia-mem-replay"
+  CreateShortcut "$SMPROGRAMS\nvidia-mem-replay\nvidia-mem-replay.lnk" "$INSTDIR\nvidia-mem-replay.exe"
+  CreateShortcut "$SMPROGRAMS\nvidia-mem-replay\Uninstall.lnk" "$INSTDIR\uninstall.exe"
 
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReplayInRam" "DisplayName" "Replay in RAM"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReplayInRam" "DisplayVersion" "0.1.0"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReplayInRam" "UninstallString" '"$INSTDIR\uninstall.exe"'
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReplayInRam" "NoModify" 1
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReplayInRam" "NoRepair" 1
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NvidiaMemReplay" "DisplayName" "nvidia-mem-replay"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NvidiaMemReplay" "DisplayVersion" "0.1.0"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NvidiaMemReplay" "UninstallString" '"$INSTDIR\uninstall.exe"'
+  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NvidiaMemReplay" "NoModify" 1
+  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NvidiaMemReplay" "NoRepair" 1
 SectionEnd
 
 Function un.onInit
   SetRegView 64
   SetShellVarContext all
-  MessageBox MB_OKCANCEL "Quit Replay in RAM from its tray menu before uninstalling, so NVIDIA's original temporary path is restored." IDOK ready
+  MessageBox MB_OKCANCEL "Quit nvidia-mem-replay from its tray menu before uninstalling, so NVIDIA's original temporary path is restored." IDOK ready
   Abort
   ready:
 FunctionEnd
@@ -94,9 +94,9 @@ FunctionEnd
 Section "Uninstall"
   # Leave shared WinFsp installed for other applications. Remove it separately
   # through Windows Apps and Features when it is no longer needed.
-  Delete "$SMPROGRAMS\Replay in RAM\Replay in RAM.lnk"
-  Delete "$SMPROGRAMS\Replay in RAM\Uninstall.lnk"
-  RMDir "$SMPROGRAMS\Replay in RAM"
+  Delete "$SMPROGRAMS\nvidia-mem-replay\nvidia-mem-replay.lnk"
+  Delete "$SMPROGRAMS\nvidia-mem-replay\Uninstall.lnk"
+  RMDir "$SMPROGRAMS\nvidia-mem-replay"
 
   Delete "$INSTDIR\nvidia-mem-replay.exe"
   Delete "$INSTDIR\memefs-x64.exe"
@@ -108,5 +108,5 @@ Section "Uninstall"
   Delete "$INSTDIR\uninstall.exe"
   RMDir "$INSTDIR"
 
-  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ReplayInRam"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NvidiaMemReplay"
 SectionEnd

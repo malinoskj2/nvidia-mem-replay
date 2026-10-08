@@ -5,7 +5,7 @@ https://github.com/Ceiridge/WinFsp-MemFs-Extended at commit
 `5ff06409150889171da6e2260564bdb2e37a8fa2` (2026-10-05 retrieval).
 The original CLI and project files are retained. The GPL-3.0 license is included.
 
-Local changes for Replay in RAM:
+Local changes for nvidia-mem-replay:
 
 - `replay-main.cpp` replaces the service CLI in the build. It mounts a case
   insensitive NTFS-named volume with an explicit byte ceiling, publishes bounded

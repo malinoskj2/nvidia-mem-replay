@@ -4,10 +4,10 @@ For a quick setup guide, see [README.md](README.md).
 
 ## Installation details
 
-Run `dist/nvidia-capture-in-ram-x64.exe`. It includes the official signed WinFsp
+Run `dist/nvidia-mem-replay-setup-x64.exe`. It includes the official signed WinFsp
 2.1.25156 installer and the bundled `memefs-x64.exe`; no separate downloads are
 needed. Driver installation requires administrator access and can require a
-reboot. Launch **Replay in RAM** from the Start menu as the same ordinary Windows
+reboot. Launch **nvidia-mem-replay** from the Start menu as the same ordinary Windows
 user who runs the NVIDIA overlay.
 
 A registered compatible WinFsp 2.1+ runtime is kept. An incompatible installation
@@ -140,7 +140,7 @@ still require a Windows NVIDIA machine.
 ## Verified builds and optional releases
 
 The **Check** workflow builds the Windows package after the Rust and native
-checks pass. Its `replay-in-ram-windows-x64` artifact contains the installer,
+checks pass. Its `nvidia-mem-replay-windows-x64` artifact contains the installer,
 a ZIP of the complete distribution (including dependency sources and licenses),
 and checksums. Successful push builds automatically receive GitHub build
 attestations for all three files. Pull-request builds are downloadable but are
@@ -168,7 +168,7 @@ Release notes include a verification command tied to the exact build commit.
 For a repository-level check, replace `OWNER/REPO` below with the GitHub repository:
 
 ```sh
-gh attestation verify nvidia-capture-in-ram-x64.exe --repo OWNER/REPO --signer-workflow OWNER/REPO/.github/workflows/check.yml
+gh attestation verify nvidia-mem-replay-setup-x64.exe --repo OWNER/REPO --signer-workflow OWNER/REPO/.github/workflows/check.yml
 ```
 
 Attestations establish GitHub Actions build provenance; they do not establish

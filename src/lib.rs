@@ -9,11 +9,11 @@ mod storage;
 mod sys;
 mod telemetry;
 
-pub(crate) const APP_NAME: &str = "Replay in RAM";
+pub(crate) const APP_NAME: &str = "nvidia-mem-replay";
 
 #[cfg(not(windows))]
 const UNSUPPORTED_PLATFORM_MESSAGE: &str =
-    "Replay in RAM requires Windows x64, NVIDIA overlay, and WinFsp";
+    "nvidia-mem-replay requires Windows x64, NVIDIA overlay, and WinFsp";
 
 #[cfg(any(windows, test))]
 use anyhow::Context;
