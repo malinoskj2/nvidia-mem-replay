@@ -1,16 +1,18 @@
 use crate::{
-    APP_NAME,
     config::{Config, MAX_DRIVE, MAX_MEMORY_LIMIT_MB, MIN_DRIVE, MIN_MEMORY_LIMIT_MB},
     service::{Shutdown, Status, Worker},
     sys::tray::Tray,
     telemetry::Sample,
 };
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use std::time::Duration;
 
 mod text;
+mod theme;
 
 const DRIVE_SELECTOR_ID: &str = "drive";
+const METRICS_GRID_ID: &str = "metrics";
+const LOCATIONS_GRID_ID: &str = "locations";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Lifecycle {
@@ -30,7 +32,7 @@ pub(crate) struct App {
 
 impl App {
     pub(crate) fn new(cc: &eframe::CreationContext<'_>, worker: Worker, config: Config) -> Self {
-        cc.egui_ctx.set_visuals(egui::Visuals::dark());
+        theme::install(&cc.egui_ctx);
         let (tray, tray_error) = match Tray::new(&cc.egui_ctx, worker.stop_handle()) {
             Ok(tray) => (Some(tray), None),
             Err(error) => (None, Some(text::tray_unavailable(&error))),
@@ -47,100 +49,125 @@ impl App {
     }
 
     fn show_status(&self, ui: &mut egui::Ui, status: &Status) {
-        ui.add_space(10.0);
-        ui.heading(APP_NAME);
-        ui.label(text::SUBTITLE);
-        ui.add_space(16.0);
-
-        let color = if status.active {
-            Color32::from_rgb(115, 225, 155)
-        } else {
-            Color32::GRAY
-        };
-        ui.label(RichText::new(text::status(status.message.as_str())).color(color));
-
-        show_metrics(ui, status);
-
         let limit = status
             .memory_limit_bytes
             .unwrap_or_else(|| self.config.limit_bytes());
-        if let Some(sample) = &status.sample {
-            show_memory_status(ui, sample, limit);
-        }
 
-        show_location(ui, status, limit);
-        show_notices(ui, status);
+        theme::group_box(ui, text::GROUP_STATUS, |ui| {
+            let color = if status.active {
+                theme::OK_TEXT
+            } else {
+                theme::GRAY_TEXT
+            };
+            ui.label(RichText::new(text::status(status.message.as_str())).color(color));
+            ui.add_space(2.0);
+            egui::Grid::new(METRICS_GRID_ID)
+                .num_columns(2)
+                .spacing([16.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label(text::LIFETIME_WRITES);
+                    ui.label(theme::value(&text::lifetime_written(status.lifetime_bytes)));
+                    ui.end_row();
+                    ui.label(text::ALLOCATED_BUFFER);
+                    ui.label(theme::value(&text::buffer_allocated(
+                        status.sample.as_ref().map(|sample| sample.buffer_bytes),
+                    )));
+                    ui.end_row();
+                });
+            if let Some(sample) = &status.sample {
+                show_memory_status(ui, sample, limit);
+            }
+        });
+
+        theme::group_box(ui, text::GROUP_LOCATIONS, |ui| {
+            egui::Grid::new(LOCATIONS_GRID_ID)
+                .num_columns(2)
+                .spacing([16.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label(text::ORIGINAL_LOCATION);
+                    ui.label(theme::value(status.original_path.as_deref().unwrap_or("—")));
+                    ui.end_row();
+                    ui.label(text::RAM_LOCATION);
+                    ui.label(theme::value(status.target.as_deref().unwrap_or("—")));
+                    ui.end_row();
+                    ui.label(text::BUFFER_CEILING);
+                    ui.label(theme::value(&text::buffer_ceiling(limit)));
+                    ui.end_row();
+                });
+        });
+
+        theme::group_box(ui, text::GROUP_INSTANT_REPLAY, |ui| {
+            ui.label(text::RECORDING_HELP);
+            show_notices(ui, status);
+        });
     }
 
     fn show_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, status: &Status) {
-        ui.add_space(12.0);
-        self.show_recording_controls(ui, status);
-        self.show_window_controls(ui, ctx);
+        ui.add_space(6.0);
+        if let Some(error) = &self.tray_error {
+            ui.label(RichText::new(error).color(theme::WARNING_TEXT));
+        }
+        ui.horizontal(|ui| {
+            self.show_recording_controls(ui, status);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                self.show_window_controls(ui, ctx);
+            });
+        });
         self.show_shutdown_controls(ui, ctx, status.shutdown);
 
-        ui.small(if self.tray.is_some() {
-            text::CLOSE_WITH_TRAY
-        } else {
-            text::CLOSE_WITHOUT_TRAY
-        });
+        ui.label(
+            RichText::new(if self.tray.is_some() {
+                text::CLOSE_WITH_TRAY
+            } else {
+                text::CLOSE_WITHOUT_TRAY
+            })
+            .small()
+            .color(theme::GRAY_TEXT),
+        );
     }
 
     fn show_recording_controls(&mut self, ui: &mut egui::Ui, status: &Status) {
         ui.add_enabled_ui(self.lifecycle == Lifecycle::Running, |ui| {
-            ui.horizontal(|ui| {
-                let label = if status.mounted {
-                    text::STOP_AND_RESTORE
+            let label = if status.mounted {
+                text::STOP_AND_RESTORE
+            } else {
+                text::RETRY_START
+            };
+            if ui.button(label).clicked() {
+                if status.mounted {
+                    self.worker.stop();
                 } else {
-                    text::RETRY_START
-                };
-                if ui.button(label).clicked() {
-                    if status.mounted {
-                        self.worker.stop();
-                    } else {
-                        self.worker.start(self.config.clone());
-                    }
+                    self.worker.start(self.config.clone());
                 }
-                if ui.button(text::SETTINGS).clicked() {
-                    self.settings = !self.settings;
-                }
-            });
+            }
+            if ui.button(text::SETTINGS).clicked() {
+                self.settings = !self.settings;
+            }
         });
     }
 
+    /// Laid out right to left, so the rightmost button comes first.
     fn show_window_controls(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        if let Some(error) = &self.tray_error {
-            ui.colored_label(Color32::YELLOW, error);
-        }
-        ui.horizontal(|ui| {
-            if let Some(tray) = &self.tray {
-                if ui
-                    .add_enabled(
-                        self.lifecycle == Lifecycle::Running,
-                        egui::Button::new(text::HIDE_TO_TRAY),
-                    )
-                    .clicked()
-                {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-                }
-                if ui
-                    .add_enabled(
-                        self.lifecycle == Lifecycle::Running,
-                        egui::Button::new(text::QUIT),
-                    )
-                    .clicked()
-                {
-                    tray.quit(ctx);
-                }
-            } else if ui
-                .add_enabled(
-                    self.lifecycle == Lifecycle::Running,
-                    egui::Button::new(text::QUIT),
-                )
+        let running = self.lifecycle == Lifecycle::Running;
+        if let Some(tray) = &self.tray {
+            if ui
+                .add_enabled(running, egui::Button::new(text::QUIT))
                 .clicked()
             {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                tray.quit(ctx);
             }
-        });
+            if ui
+                .add_enabled(running, egui::Button::new(text::HIDE_TO_TRAY))
+                .clicked()
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            }
+        } else if ui
+            .add_enabled(running, egui::Button::new(text::QUIT))
+            .clicked()
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     fn show_shutdown_controls(
@@ -158,7 +185,7 @@ impl App {
             return;
         }
 
-        ui.label(text::SHUTDOWN_FAILED_HELP);
+        ui.label(RichText::new(text::SHUTDOWN_FAILED_HELP).color(theme::ERROR_TEXT));
         ui.horizontal(|ui| {
             if ui.button(text::RETRY_SHUTDOWN).clicked() {
                 self.worker.shutdown();
@@ -178,10 +205,13 @@ impl App {
 
         egui::Window::new(text::SETTINGS_TITLE)
             .open(&mut self.settings)
+            .resizable(false)
+            .collapsible(false)
             .show(ctx, |ui| {
-                show_storage_settings(ui, &mut self.config);
-
-                ui.label(text::RESTART_NOTICE);
+                theme::group_box(ui, text::GROUP_STORAGE, |ui| {
+                    show_storage_settings(ui, &mut self.config);
+                });
+                ui.label(RichText::new(text::RESTART_NOTICE).color(theme::GRAY_TEXT));
                 if ui.button(text::APPLY_AND_RESTART).clicked() {
                     self.worker.start(self.config.clone());
                 }
@@ -235,62 +265,34 @@ impl eframe::App for App {
     }
 }
 
-fn show_metrics(ui: &mut egui::Ui, status: &Status) {
-    ui.add_space(18.0);
-    ui.horizontal(|ui| {
-        metric(
-            ui,
-            text::LIFETIME_WRITES,
-            &text::lifetime_written(status.lifetime_bytes),
-        );
-        ui.add_space(24.0);
-        let allocated =
-            text::buffer_allocated(status.sample.as_ref().map(|sample| sample.buffer_bytes));
-        metric(ui, text::ALLOCATED_BUFFER, &allocated);
-    });
-}
-
 fn show_memory_status(ui: &mut egui::Ui, sample: &Sample, limit: u64) {
-    ui.add_space(10.0);
-    ui.small(text::memory_summary(
-        sample.resident_bytes,
-        sample.available_bytes,
-    ));
+    ui.label(
+        RichText::new(text::memory_summary(
+            sample.resident_bytes,
+            sample.available_bytes,
+        ))
+        .small()
+        .color(theme::GRAY_TEXT),
+    );
     if sample.available_bytes < 1_000_000_000 {
-        ui.colored_label(Color32::YELLOW, text::LOW_MEMORY_WARNING);
+        ui.label(RichText::new(text::LOW_MEMORY_WARNING).color(theme::WARNING_TEXT));
     }
     if sample.buffer_bytes > limit * 9 / 10 {
-        ui.colored_label(Color32::YELLOW, text::BUFFER_LIMIT_WARNING);
+        ui.label(RichText::new(text::BUFFER_LIMIT_WARNING).color(theme::WARNING_TEXT));
     }
-}
-
-fn show_location(ui: &mut egui::Ui, status: &Status, limit: u64) {
-    ui.add_space(16.0);
-    if let Some(path) = &status.original_path {
-        ui.small(text::original_location(path));
-    }
-    if let Some(path) = &status.target {
-        ui.small(text::ram_location(path));
-    }
-    ui.small(text::buffer_ceiling(limit));
-    ui.add_space(8.0);
-    ui.label(text::RECORDING_HELP);
 }
 
 fn show_notices(ui: &mut egui::Ui, status: &Status) {
     if status.mounted
         && let Some(warning) = &status.warning
     {
-        ui.add_space(8.0);
-        ui.colored_label(Color32::YELLOW, warning);
+        ui.label(RichText::new(warning).color(theme::WARNING_TEXT));
     }
     if let Some(notice) = &status.notice {
-        ui.add_space(8.0);
-        ui.colored_label(Color32::YELLOW, notice);
+        ui.label(RichText::new(notice).color(theme::WARNING_TEXT));
     }
     if let Some(error) = &status.error {
-        ui.add_space(8.0);
-        ui.colored_label(Color32::from_rgb(255, 155, 135), error);
+        ui.label(RichText::new(error).color(theme::ERROR_TEXT));
     }
 }
 
@@ -312,21 +314,22 @@ fn show_storage_settings(ui: &mut egui::Ui, config: &mut Config) {
     });
 }
 
-fn metric(ui: &mut egui::Ui, label: &str, value: &str) {
-    ui.vertical(|ui| {
-        ui.small(label);
-        ui.label(RichText::new(value).size(27.0).strong());
-    });
-}
+pub(crate) struct StartupError(String);
 
-pub(crate) struct StartupError(pub(crate) String);
+impl StartupError {
+    pub(crate) fn new(cc: &eframe::CreationContext<'_>, message: String) -> Self {
+        theme::install(&cc.egui_ctx);
+        Self(message)
+    }
+}
 
 impl eframe::App for StartupError {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading(text::STARTUP_FAILED_TITLE);
-            ui.label(&self.0);
-            ui.label(text::STARTUP_FAILED_HELP);
+            theme::group_box(ui, text::STARTUP_FAILED_TITLE, |ui| {
+                ui.label(RichText::new(&self.0).color(theme::ERROR_TEXT));
+                ui.label(text::STARTUP_FAILED_HELP);
+            });
         });
     }
 }

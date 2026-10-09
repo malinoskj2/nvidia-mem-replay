@@ -38,8 +38,8 @@ pub fn run() -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(APP_NAME)
-            .with_inner_size([460.0, 470.0])
-            .with_min_inner_size([420.0, 420.0]),
+            .with_inner_size([460.0, 390.0])
+            .with_min_inner_size([420.0, 360.0]),
         ..Default::default()
     };
 
@@ -48,7 +48,7 @@ pub fn run() -> Result<()> {
         options,
         Box::new(move |cc| match startup {
             Ok((worker, config)) => Ok(Box::new(gui::App::new(cc, worker, config))),
-            Err(error) => Ok(Box::new(gui::StartupError(format!("{error:#}")))),
+            Err(error) => Ok(Box::new(gui::StartupError::new(cc, format!("{error:#}")))),
         }),
     )
     .map_err(|error| anyhow::anyhow!("open desktop window: {error}"))
