@@ -93,8 +93,20 @@ This is the only module that uses `unsafe` Rust.
 
 Discovery reads the live value from the engine, so the NVIDIA App must be
 running. The registry is read only to preserve the original value type and
-bytes for the journal. Instant Replay opens its temporary files when it starts,
-so the user still switches it off and on after the redirection.
+bytes for the journal.
+
+Instant Replay opens its temporary files when capture starts, so a location
+change takes effect only after an off/on cycle. `src/service/replay.rs` wraps
+the redirection and the restoration in that cycle when Instant Replay is
+capturing: the state comes from `GetCaptureSessionParam` (parameter 12 on the
+engine-wide session handle), and the toggle is the user's own Instant Replay
+on/off hotkey, read from `IRToggleHKeyCount`/`IRToggleHKey<n>` under
+`NVSPCAPS` and pressed with `SendInput` (`src/sys/hotkey.rs`). NVIDIA's hotkey
+helper forwards it to the overlay, which stops or starts Instant Replay on its
+own capture session; the app never creates a session of its own. When Instant
+Replay is idle nothing is pressed, and when the hotkey is unassigned or the
+state cannot be read, the location change still happens and the window shows a
+notice asking the user to toggle it.
 
 A journal is saved before redirection. Stop/quit restores through the engine
 before unmounting; when the engine cannot be reached, the registry value it
@@ -140,7 +152,8 @@ python3 tests/native/run.py
 Portable lifecycle, storage, telemetry and registry representation tests run on
 Linux without a driver or display. Windows adapters and GUI are target restricted.
 Unsafe Rust is confined to `src/sys/shadowplay.rs`, the binding to NVIDIA's
-ShadowPlay API library; native C++ uses WinFsp's API.
+ShadowPlay API library, plus one virtual-key newtype conversion in
+`src/sys/hotkey.rs`; native C++ uses WinFsp's API.
 The native harness exercises production methods with platform stubs, including
 allocation-failure injection and rename rollback; it does not replace driver
 integration testing.

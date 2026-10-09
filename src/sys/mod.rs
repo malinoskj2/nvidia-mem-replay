@@ -1,4 +1,6 @@
 pub(crate) mod helper;
+#[cfg(windows)]
+pub(crate) mod hotkey;
 pub(crate) mod nvidia;
 
 /// The only module that calls into native code directly; see its documentation.

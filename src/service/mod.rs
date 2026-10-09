@@ -20,6 +20,7 @@ use std::{
 
 mod accounting;
 mod cleanup;
+mod replay;
 mod text;
 use accounting::Accounting;
 use cleanup::{complete_shutdown, stop};
@@ -54,7 +55,7 @@ impl DisplayStatus {
         match self {
             Self::Preparing => "Preparing RAM storage…",
             Self::StartFailed => "Could not start RAM storage",
-            Self::Waiting => "RAM ready · switch Instant Replay off and on in Alt+Z",
+            Self::Waiting => "RAM ready · waiting for Instant Replay writes",
             Self::Writing => "Data is being written to RAM",
             Self::Ready => "RAM ready · no writes in the last 2 seconds",
             Self::Stopping => "Stopping RAM storage…",
@@ -77,6 +78,8 @@ pub(crate) struct Status {
     pub(crate) memory_limit_bytes: Option<u64>,
     pub(crate) error: Option<String>,
     pub(crate) warning: Option<String>,
+    /// Instant Replay could not be restarted for the user; the location change itself succeeded.
+    pub(crate) notice: Option<String>,
     pub(crate) shutdown: Shutdown,
 }
 
@@ -204,6 +207,7 @@ struct State {
     location: Option<Redirect>,
     memory_limit_bytes: Option<u64>,
     error: Option<String>,
+    notice: Option<String>,
     shutdown: Shutdown,
 }
 
@@ -234,6 +238,7 @@ impl State {
             memory_limit_bytes: self.memory_limit_bytes,
             error: self.error.clone(),
             warning: self.accounting.warning.clone(),
+            notice: self.notice.clone(),
             shutdown: self.shutdown,
         }
     }
@@ -376,6 +381,7 @@ pub(crate) fn recover_with(
 }
 
 fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {
+    state.notice = None;
     let redirect =
         nvidia::plan(config.target()).context("discover NVIDIA temporary files location")?;
     state.location = Some(redirect.clone());
@@ -385,7 +391,10 @@ fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {
     store
         .save_redirect(&redirect)
         .context("save redirect recovery journal")?;
-    nvidia::apply(&redirect).context("redirect NVIDIA temporary files")?;
+    // Instant Replay reopens its files at the new location only after an off/on cycle.
+    let (applied, replayed) = replay::around(&mut replay::overlay(), || nvidia::apply(&redirect));
+    applied.context("redirect NVIDIA temporary files")?;
+    state.notice = replayed.err().map(|error| text::replay_notice(&error));
 
     state.memory_limit_bytes = Some(config.limit_bytes());
     state.message = DisplayStatus::Waiting;

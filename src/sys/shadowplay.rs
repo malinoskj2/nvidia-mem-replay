@@ -48,7 +48,18 @@ const PROPERTY_ARGS_VERSION: u32 = 0x0001_0060;
 const PROPERTY_NAME_CAPACITY: usize = 64;
 const SET_PROPERTY_SLOT: usize = 6;
 const GET_PROPERTY_SLOT: usize = 7;
+const GET_SESSION_PARAM_SLOT: usize = 15;
 const VT_BSTR: u16 = 8;
+/// Low 16 bits: `size_of::<SessionParamArgs>()`.
+const SESSION_PARAM_ARGS_VERSION: u32 = 0x0001_0020;
+/// Engine-wide parameters are read without a capture session of our own.
+const GLOBAL_SESSION: u64 = 0xFFFF_FFFF;
+/// Parameter 12 reports whether Instant Replay is capturing right now.
+const INSTANT_REPLAY_STATE_COMMAND: u32 = 12;
+const INSTANT_REPLAY_STATE_HEADER: u16 = 0x1c;
+const PARAM_VALUE_VERSION: u16 = 1;
+const PARAM_VALUE_SIZE: u32 = 12;
+const INSTANT_REPLAY_STATE: &str = "Instant Replay state";
 
 #[derive(Debug, Error)]
 pub(crate) enum ApiError {
@@ -119,9 +130,29 @@ struct PropertyArgs {
     value: Variant,
 }
 
+#[repr(C)]
+struct SessionParamArgs {
+    version: u32,
+    reserved: u32,
+    session: u64,
+    command: u32,
+    size: u32,
+    data: *mut ParamValue,
+}
+
+#[repr(C)]
+struct ParamValue {
+    header: u16,
+    version: u16,
+    value: u32,
+    result: u32,
+}
+
 const _: () = assert!(size_of::<CreateParams>() == 0x18);
 const _: () = assert!(size_of::<Variant>() == 24);
 const _: () = assert!(size_of::<PropertyArgs>() == 0x60);
+const _: () = assert!(size_of::<SessionParamArgs>() == 0x20);
+const _: () = assert!(size_of::<ParamValue>() == PARAM_VALUE_SIZE as usize);
 
 impl Variant {
     const EMPTY: Self = Self {
@@ -178,6 +209,11 @@ pub(crate) fn text(name: &str) -> Result<String, ApiError> {
 /// Set a text property; the engine applies it immediately and persists it to the registry.
 pub(crate) fn set_text(name: &str, value: &str) -> Result<(), ApiError> {
     with_api(|api| api.set_text(name, value))
+}
+
+/// Whether Instant Replay is capturing right now, which is when its temporary files are open.
+pub(crate) fn instant_replay_running() -> Result<bool, ApiError> {
+    with_api(Api::instant_replay_running)
 }
 
 fn with_api<T>(call: impl FnOnce(&Api) -> Result<T, ApiError>) -> Result<T, ApiError> {
@@ -283,6 +319,36 @@ impl Api {
         } else {
             Err(ApiError::Call {
                 name: name.to_owned(),
+                result,
+            })
+        }
+    }
+
+    fn instant_replay_running(&self) -> Result<bool, ApiError> {
+        let mut value = ParamValue {
+            header: INSTANT_REPLAY_STATE_HEADER,
+            version: PARAM_VALUE_VERSION,
+            value: 0,
+            result: 0,
+        };
+        let mut args = SessionParamArgs {
+            version: SESSION_PARAM_ARGS_VERSION,
+            reserved: 0,
+            session: GLOBAL_SESSION,
+            command: INSTANT_REPLAY_STATE_COMMAND,
+            size: PARAM_VALUE_SIZE,
+            data: &raw mut value,
+        };
+        // SAFETY: `args` matches SESSION_PARAM_ARGS_VERSION and `value` outlives the call.
+        let result = unsafe {
+            (self.method(GET_SESSION_PARAM_SLOT))(self.interface, (&raw mut args).cast())
+        };
+
+        if result == 0 {
+            Ok(value.result != 0)
+        } else {
+            Err(ApiError::Call {
+                name: INSTANT_REPLAY_STATE.to_owned(),
                 result,
             })
         }

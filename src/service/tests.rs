@@ -251,7 +251,7 @@ fn shutdown_retries_restoration_after_session_has_already_stopped() {
     store.save_redirect(&redirect()).unwrap();
     let mut state = State::default();
 
-    let failed = stop_with(&store, &mut state, |_| {
+    let failed = stop_with(&store, &mut state, &mut (), |_| {
         anyhow::bail!("registry unavailable")
     });
     complete_shutdown(&mut state, &failed);
@@ -259,7 +259,7 @@ fn shutdown_retries_restoration_after_session_has_already_stopped() {
     assert!(state.shutdown == Shutdown::Failed);
     assert!(store.redirect().unwrap().is_some());
 
-    let retried = stop_with(&store, &mut state, |_| Ok(()));
+    let retried = stop_with(&store, &mut state, &mut (), |_| Ok(()));
     complete_shutdown(&mut state, &retried);
 
     assert!(state.shutdown == Shutdown::Complete);

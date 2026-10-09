@@ -284,6 +284,10 @@ fn show_notices(ui: &mut egui::Ui, status: &Status) {
         ui.add_space(8.0);
         ui.colored_label(Color32::YELLOW, warning);
     }
+    if let Some(notice) = &status.notice {
+        ui.add_space(8.0);
+        ui.colored_label(Color32::YELLOW, notice);
+    }
     if let Some(error) = &status.error {
         ui.add_space(8.0);
         ui.colored_label(Color32::from_rgb(255, 155, 135), error);

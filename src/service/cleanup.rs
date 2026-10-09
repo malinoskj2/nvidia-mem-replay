@@ -1,4 +1,4 @@
-use super::{DisplayStatus, Shutdown, State, text};
+use super::{DisplayStatus, Shutdown, State, replay, text};
 use crate::{
     storage::Store,
     sys::{
@@ -50,7 +50,7 @@ impl std::fmt::Display for CleanupReport {
 }
 
 pub(super) fn stop(store: &Store, state: &mut State) -> CleanupReport {
-    stop_with(store, state, |redirect| {
+    stop_with(store, state, &mut replay::overlay(), |redirect| {
         nvidia::restore(redirect).map_err(Into::into)
     })
 }
@@ -58,6 +58,7 @@ pub(super) fn stop(store: &Store, state: &mut State) -> CleanupReport {
 pub(super) fn stop_with(
     store: &Store,
     state: &mut State,
+    controls: &mut impl replay::Controls,
     restore: impl FnOnce(&Redirect) -> Result<()>,
 ) -> CleanupReport {
     let Some(mut running) = state.session.take() else {
@@ -91,8 +92,11 @@ pub(super) fn stop_with(
         return report;
     };
 
-    // Restore before unmounting; retain the journal if restoration or exit fails.
-    let restoration = restore(&running.redirect).context(text::RESTORE_TEMP_PATH);
+    // Restore before unmounting, with Instant Replay stopped while its files move back;
+    // retain the journal if restoration or exit fails.
+    let (restoration, replayed) = replay::around(controls, || restore(&running.redirect));
+    let restoration = restoration.context(text::RESTORE_TEMP_PATH);
+    state.notice = replayed.err().map(|error| text::replay_notice(&error));
     let stopped = running.helper.stop();
     let exited = stopped.exited;
     let report = finish_stop(store, &mut running.meter, state, restoration, stopped);
