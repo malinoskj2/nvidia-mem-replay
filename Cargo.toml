@@ -29,7 +29,9 @@ strip = "symbols"
 codegen-units = 1
 
 [lints.rust]
-# Allowed only in src/sys/shadowplay.rs, the binding to NVIDIA's ShadowPlay API library.
+# Allowed only in src/sys/shadowplay.rs (the binding to NVIDIA's ShadowPlay API library) and
+# for two one-line winsafe calls that the crate marks unsafe: a virtual-key constant in
+# src/sys/hotkey.rs and EM_SCROLLCARET for the Logs view in src/gui.rs.
 unsafe_code = "deny"
 unreachable_pub = "warn"
 

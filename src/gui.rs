@@ -527,6 +527,14 @@ impl LogsPage {
             .collect();
         self.view.set_selection(length, length);
         self.view.replace_selection(&text);
+        self.scroll_to_caret();
+    }
+
+    /// A read-only edit without focus does not follow its caret by itself.
+    #[allow(unsafe_code)]
+    fn scroll_to_caret(&self) {
+        // SAFETY: EM_SCROLLCARET takes no parameters and is sent to this control's own handle.
+        unsafe { self.view.hwnd().SendMessage(w::msg::EmScrollCaret {}) };
     }
 }
 

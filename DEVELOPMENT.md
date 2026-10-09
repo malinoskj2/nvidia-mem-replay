@@ -96,7 +96,9 @@ dropped, so the GUI connects as the `TestingTool` client and the supervisor
 process as the `Installer` client. The layout follows the open-source Experienceless client and was
 verified against NVIDIA App 11.0.9; the engine logs every version or client-id
 mismatch to `%ProgramData%\NVIDIA Corporation\ShadowPlay\CaptureCore.log`.
-This is the only module that uses `unsafe` Rust.
+This is the only module with `unsafe` Rust of its own; the two other `unsafe`
+blocks in the crate are single winsafe calls (a virtual-key constant in
+`src/sys/hotkey.rs`, `EM_SCROLLCARET` for the Logs view in `src/gui.rs`).
 
 Discovery reads the live value from the engine, so the NVIDIA App must be
 running. The registry is read only to preserve the original value type and
