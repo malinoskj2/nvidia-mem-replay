@@ -1,5 +1,5 @@
 use crate::{
-    config::{MAX_DRIVE, MAX_MEMORY_LIMIT_MB, MIN_DRIVE, MIN_MEMORY_LIMIT_MB, Volume},
+    config::{MAX_MEMORY_LIMIT_MB, MIN_MEMORY_LIMIT_MB, Volume},
     sys::{helper::Helper, icon, nvidia, startup},
 };
 use anyhow::{Context as _, Result};
@@ -14,6 +14,9 @@ use std::{
 
 const TELEMETRY_REPORT_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_STOP_COMMAND_BYTES: u64 = 512;
+/// Drive-letter mount points (used by the smoke script) stay clear of the system drives.
+const MIN_DRIVE: char = 'D';
+const MAX_DRIVE: char = 'Z';
 
 #[derive(Parser)]
 #[command(name = crate::APP_NAME)]

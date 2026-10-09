@@ -10,9 +10,7 @@ pub(super) const EXIT_ANYWAY: &str = "Exit anyway";
 pub(super) const APPLY_AND_RESTART: &str = "Apply and restart";
 pub(super) const LIFETIME_WRITES: &str = "Written (lifetime)";
 pub(super) const ALLOCATED_BUFFER: &str = "Buffer allocated";
-pub(super) const SHOW_AS_DRIVE: &str = "Show as a drive letter in Explorer";
 pub(super) const MEMORY_CEILING: &str = "Ceiling (MB)";
-pub(super) const DRIVE_REQUIRED: &str = "Choose a drive letter.";
 pub(super) const CEILING_REQUIRED: &str = "Enter the memory ceiling in MB.";
 
 pub(super) const GROUP_STATUS: &str = "Status";
@@ -31,7 +29,7 @@ pub(super) const PATH_ORIGINAL: &str = "NVIDIA temporary files are at their orig
 pub(super) const STOP_HELP: &str =
     "Stops recording to RAM, restores NVIDIA's original location and discards the buffer.";
 pub(super) const START_HELP: &str =
-    "Mounts the RAM drive and redirects NVIDIA's temporary files to it.";
+    "Mounts the RAM storage and redirects NVIDIA's temporary files to it.";
 pub(super) const CLOSE_WITH_TRAY: &str =
     "Closing this window keeps recording in the tray. Right-click the tray icon to quit.";
 pub(super) const SHUTDOWN_PENDING: &str = "Restoring the temporary path and stopping RAM storage…";
@@ -68,8 +66,4 @@ pub(super) fn buffer_allocated(bytes: Option<u64>) -> String {
 
 pub(super) fn buffer_ceiling(bytes: u64) -> String {
     format!("{} MB", bytes / 1_000_000)
-}
-
-pub(super) fn drive(letter: char) -> String {
-    format!("{letter}:")
 }

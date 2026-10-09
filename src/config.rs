@@ -1,56 +1,41 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub(crate) const MIN_DRIVE: char = 'D';
-pub(crate) const MAX_DRIVE: char = 'Z';
 pub(crate) const MIN_MEMORY_LIMIT_MB: u32 = 256;
 pub(crate) const MAX_MEMORY_LIMIT_MB: u32 = 65_536;
 const RECORDING_DIRECTORY: &str = "NVIDIA-Replay";
-/// The hidden RAM volume is mounted at this directory inside the application state folder.
-const HIDDEN_MOUNT_DIRECTORY: &str = "ram";
-
-/// Where the RAM volume appears on the system.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum Placement {
-    /// A directory mount point inside the hidden application state folder: no drive letter,
-    /// nothing in Explorer or file dialogs.
-    #[default]
-    Hidden,
-    /// A drive letter, visible in Explorer like any removable drive.
-    Drive,
-}
+/// The RAM volume is mounted at this directory inside the application state folder, so it has
+/// no drive letter and never shows up in Explorer or file dialogs.
+const MOUNT_DIRECTORY: &str = "ram";
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Config {
-    pub(crate) placement: Placement,
-    /// The letter used when `placement` is [`Placement::Drive`].
-    pub(crate) drive: char,
     pub(crate) memory_limit_mb: u32,
 }
 
-// Accept only the known legacy helper field while rejecting unrelated misspellings.
+// Accept the settings of earlier versions (a custom helper path, a drive letter and its
+// placement) while rejecting unrelated misspellings.
 impl<'de> Deserialize<'de> for Config {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
         #[serde(default, deny_unknown_fields)]
         struct Saved {
-            placement: Placement,
-            drive: char,
             memory_limit_mb: u32,
             #[serde(rename = "helper")]
             _legacy_helper: Option<serde::de::IgnoredAny>,
+            #[serde(rename = "drive")]
+            _legacy_drive: Option<serde::de::IgnoredAny>,
+            #[serde(rename = "placement")]
+            _legacy_placement: Option<serde::de::IgnoredAny>,
         }
 
         impl Default for Saved {
             fn default() -> Self {
-                let config = Config::default();
-
                 Self {
-                    placement: config.placement,
-                    drive: config.drive,
-                    memory_limit_mb: config.memory_limit_mb,
+                    memory_limit_mb: Config::default().memory_limit_mb,
                     _legacy_helper: None,
+                    _legacy_drive: None,
+                    _legacy_placement: None,
                 }
             }
         }
@@ -58,8 +43,6 @@ impl<'de> Deserialize<'de> for Config {
         let saved = Saved::deserialize(deserializer)?;
 
         Ok(Self {
-            placement: saved.placement,
-            drive: saved.drive,
             memory_limit_mb: saved.memory_limit_mb,
         })
     }
@@ -68,8 +51,6 @@ impl<'de> Deserialize<'de> for Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            placement: Placement::Hidden,
-            drive: 'R',
             memory_limit_mb: 8192,
         }
     }
@@ -77,8 +58,6 @@ impl Default for Config {
 
 #[derive(Debug, Error)]
 pub(crate) enum ConfigError {
-    #[error("choose a drive letter from D through Z")]
-    Drive,
     #[error("memory ceiling must be between 256 and 65536 MB")]
     Memory,
 }
@@ -111,27 +90,22 @@ pub(crate) const fn limit_bytes(memory_limit_mb: u32) -> u64 {
 
 impl Config {
     pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        if !(MIN_DRIVE..=MAX_DRIVE).contains(&self.drive) {
-            return Err(ConfigError::Drive);
-        }
         if !(MIN_MEMORY_LIMIT_MB..=MAX_MEMORY_LIMIT_MB).contains(&self.memory_limit_mb) {
             return Err(ConfigError::Memory);
         }
         Ok(())
     }
 
-    pub(crate) fn mount(&self) -> String {
-        match self.placement {
-            Placement::Drive => format!("{}:", self.drive),
-            Placement::Hidden => crate::storage::state_directory()
-                .join(HIDDEN_MOUNT_DIRECTORY)
-                .display()
-                .to_string(),
-        }
+    /// The mount point every configuration uses.
+    pub(crate) fn mount() -> String {
+        crate::storage::state_directory()
+            .join(MOUNT_DIRECTORY)
+            .display()
+            .to_string()
     }
 
     pub(crate) fn volume(&self) -> Volume {
-        Volume::new(self.mount(), self.memory_limit_mb)
+        Volume::new(Self::mount(), self.memory_limit_mb)
     }
 
     pub(crate) fn target(&self) -> String {

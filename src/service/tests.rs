@@ -381,10 +381,7 @@ fn invalid_restart_publishes_error_without_stopping_or_polling() {
     state.accounting.total = 42;
     state.accounting.dirty = true;
     let output = Mutex::new(Status::default());
-    let config = Config {
-        drive: 'C',
-        ..Config::default()
-    };
+    let config = Config { memory_limit_mb: 0 };
 
     let outcome = handle_command(&store, Some(Command::Start(config)), &mut state, &output);
 
@@ -396,7 +393,7 @@ fn invalid_restart_publishes_error_without_stopping_or_polling() {
     assert_eq!(published.message, DisplayStatus::Ready);
     assert_eq!(published.lifetime_bytes, 42);
     assert_eq!(published.error, state.error);
-    assert!(published.error.as_ref().unwrap().contains("drive letter"));
+    assert!(published.error.as_ref().unwrap().contains("memory ceiling"));
 }
 
 #[test]

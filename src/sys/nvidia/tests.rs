@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn only_paths_on_the_ram_volume_count_as_inside_the_mount() {
+    let target = r"C:\Users\me\AppData\Local\NvidiaMemReplay\ram\NVIDIA-Replay";
+    assert!(inside_mount(target, target));
+    assert!(inside_mount(
+        r"c:\users\ME\appdata\local\nvidiamemreplay\RAM",
+        target
+    ));
+    assert!(inside_mount(
+        r"C:\Users\me\AppData\Local\NvidiaMemReplay\ram\other",
+        target
+    ));
+    assert!(!inside_mount(r"C:\Users\me\Videos\temp", target));
+    assert!(!inside_mount(
+        r"C:\Users\me\AppData\Local\NvidiaMemReplay\ramdisk",
+        target
+    ));
+    assert!(!inside_mount(r"C:\Users\me\AppData\Local", target));
+
+    assert!(inside_mount(r"T:\anything", r"T:\NVIDIA-Replay"));
+    assert!(!inside_mount(r"S:\NvidiaTemp", r"T:\NVIDIA-Replay"));
+}
+
+#[test]
 fn binary_and_string_paths_preserve_the_registry_type() {
     for kind in [1, 2, 3] {
         let value = RawValue {

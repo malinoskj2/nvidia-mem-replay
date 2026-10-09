@@ -33,7 +33,7 @@ pub(crate) enum NvidiaError {
     #[error("NVIDIA temporary path is empty or invalid")]
     Path,
     #[error(
-        "NVIDIA already targets the selected RAM drive without a recovery journal. Set a persistent temporary-files location in the overlay, then retry"
+        "NVIDIA already targets the RAM storage location without a recovery journal. Set a persistent temporary-files location in the overlay, then retry"
     )]
     RamOriginal,
     #[error("NVIDIA registry access: {0}")]
@@ -98,9 +98,7 @@ impl RawValue {
 /// Plan the redirection from the location the running `ShadowPlay` engine uses right now.
 pub(crate) fn plan(target: String) -> Result<Redirect, NvidiaError> {
     let original_path = current_path()?;
-    if let (Some(original_drive), Some(target_drive)) = (original_path.get(..2), target.get(..2))
-        && original_drive.eq_ignore_ascii_case(target_drive)
-    {
+    if inside_mount(&original_path, &target) {
         return Err(NvidiaError::RamOriginal);
     }
 
@@ -121,6 +119,15 @@ pub(crate) fn plan(target: String) -> Result<Redirect, NvidiaError> {
         original_path,
         target,
     })
+}
+
+/// Whether `path` lies on the RAM volume that `target` (`<mount>\NVIDIA-Replay`) belongs to:
+/// NVIDIA pointing there without a recovery journal means the real location is unknown.
+pub(crate) fn inside_mount(path: &str, target: &str) -> bool {
+    let mount = target.rsplit_once('\\').map_or(target, |(mount, _)| mount);
+    path.get(..mount.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(mount))
+        && matches!(path[mount.len()..].chars().next(), None | Some('\\'))
 }
 
 /// Switch the running engine to the RAM location; the engine persists the value itself.

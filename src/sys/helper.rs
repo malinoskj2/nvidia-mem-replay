@@ -31,7 +31,7 @@ const STOP_COMMAND: &[u8] = b"stop\n";
 pub(crate) enum HelperError {
     #[error("RAM filesystem helper I/O: {0}")]
     Io(#[from] io::Error),
-    #[error("RAM storage location {0} is already in use; choose another drive letter or placement")]
+    #[error("RAM storage location {0} is already in use")]
     Occupied(String),
     #[error("RAM filesystem did not become ready within 15 seconds")]
     Timeout,
