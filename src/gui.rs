@@ -81,6 +81,13 @@ impl App {
         });
 
         theme::group_box(ui, text::GROUP_LOCATIONS, |ui| {
+            let (message, color) = if status.mounted {
+                (text::PATH_SWAPPED, theme::OK_TEXT)
+            } else {
+                (text::PATH_ORIGINAL, theme::GRAY_TEXT)
+            };
+            ui.label(RichText::new(text::status(message)).color(color));
+            ui.add_space(2.0);
             egui::Grid::new(LOCATIONS_GRID_ID)
                 .num_columns(2)
                 .spacing([16.0, 4.0])

@@ -20,6 +20,8 @@ pub(super) const GROUP_STORAGE: &str = "RAM storage";
 pub(super) const ORIGINAL_LOCATION: &str = "NVIDIA location";
 pub(super) const RAM_LOCATION: &str = "RAM location";
 pub(super) const BUFFER_CEILING: &str = "Buffer ceiling";
+pub(super) const PATH_SWAPPED: &str = "NVIDIA temporary files are redirected to RAM";
+pub(super) const PATH_ORIGINAL: &str = "NVIDIA temporary files are at their original location";
 
 pub(super) const CLOSE_WITH_TRAY: &str =
     "Closing hides to tray. Quit restores the path and discards the buffer.";
