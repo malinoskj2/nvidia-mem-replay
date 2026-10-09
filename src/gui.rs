@@ -21,12 +21,18 @@ enum Lifecycle {
     ExitReady,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Status,
+    Settings,
+}
+
 pub(crate) struct App {
     tray: Option<Tray>,
     tray_error: Option<String>,
     worker: Worker,
     config: Config,
-    settings: bool,
+    tab: Tab,
     lifecycle: Lifecycle,
 }
 
@@ -43,15 +49,19 @@ impl App {
             tray_error,
             worker,
             config,
-            settings: false,
+            tab: Tab::Status,
             lifecycle: Lifecycle::Running,
         }
     }
 
-    fn show_status(&self, ui: &mut egui::Ui, status: &Status) {
-        let limit = status
+    fn limit(&self, status: &Status) -> u64 {
+        status
             .memory_limit_bytes
-            .unwrap_or_else(|| self.config.limit_bytes());
+            .unwrap_or_else(|| self.config.limit_bytes())
+    }
+
+    fn show_status_tab(&self, ui: &mut egui::Ui, status: &Status) {
+        let limit = self.limit(status);
 
         theme::group_box(ui, text::GROUP_STATUS, |ui| {
             let color = if status.active {
@@ -75,7 +85,7 @@ impl App {
                     ui.end_row();
                 });
             if let Some(sample) = &status.sample {
-                show_memory_status(ui, sample, limit);
+                show_memory_warnings(ui, sample, limit);
             }
             show_notices(ui, status);
         });
@@ -105,19 +115,45 @@ impl App {
         });
     }
 
-    fn show_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, status: &Status) {
-        ui.add_space(6.0);
+    fn show_settings_tab(&mut self, ui: &mut egui::Ui, status: &Status) {
+        let running = self.lifecycle == Lifecycle::Running;
+
+        theme::group_box(ui, text::GROUP_STORAGE, |ui| {
+            show_storage_settings(ui, &mut self.config);
+            ui.add_space(2.0);
+            ui.label(RichText::new(text::RESTART_NOTICE).color(theme::GRAY_TEXT));
+            ui.add_enabled_ui(running, |ui| {
+                if ui.button(text::APPLY_AND_RESTART).clicked() {
+                    self.worker.start(self.config.clone());
+                }
+            });
+        });
+
+        theme::group_box(ui, text::GROUP_RECORDING, |ui| {
+            let (label, help) = if status.mounted {
+                (text::STOP_AND_RESTORE, text::STOP_HELP)
+            } else {
+                (text::RETRY_START, text::START_HELP)
+            };
+            ui.label(help);
+            ui.add_enabled_ui(running, |ui| {
+                if ui.button(label).clicked() {
+                    if status.mounted {
+                        self.worker.stop();
+                    } else {
+                        self.worker.start(self.config.clone());
+                    }
+                }
+            });
+        });
+    }
+
+    fn show_footer(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, status: &Status) {
+        ui.add_space(4.0);
+        self.show_shutdown_controls(ui, ctx, status.shutdown);
         if let Some(error) = &self.tray_error {
             ui.label(RichText::new(error).color(theme::WARNING_TEXT));
         }
-        ui.horizontal(|ui| {
-            self.show_recording_controls(ui, status);
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                self.show_window_controls(ui, ctx);
-            });
-        });
-        self.show_shutdown_controls(ui, ctx, status.shutdown);
-
         ui.label(
             RichText::new(if self.tray.is_some() {
                 text::CLOSE_WITH_TRAY
@@ -127,50 +163,6 @@ impl App {
             .small()
             .color(theme::GRAY_TEXT),
         );
-    }
-
-    fn show_recording_controls(&mut self, ui: &mut egui::Ui, status: &Status) {
-        ui.add_enabled_ui(self.lifecycle == Lifecycle::Running, |ui| {
-            let label = if status.mounted {
-                text::STOP_AND_RESTORE
-            } else {
-                text::RETRY_START
-            };
-            if ui.button(label).clicked() {
-                if status.mounted {
-                    self.worker.stop();
-                } else {
-                    self.worker.start(self.config.clone());
-                }
-            }
-            if ui.button(text::SETTINGS).clicked() {
-                self.settings = !self.settings;
-            }
-        });
-    }
-
-    /// Laid out right to left, so the rightmost button comes first.
-    fn show_window_controls(&self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let running = self.lifecycle == Lifecycle::Running;
-        if let Some(tray) = &self.tray {
-            if ui
-                .add_enabled(running, egui::Button::new(text::QUIT))
-                .clicked()
-            {
-                tray.quit(ctx);
-            }
-            if ui
-                .add_enabled(running, egui::Button::new(text::HIDE_TO_TRAY))
-                .clicked()
-            {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            }
-        } else if ui
-            .add_enabled(running, egui::Button::new(text::QUIT))
-            .clicked()
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
     }
 
     fn show_shutdown_controls(
@@ -201,26 +193,6 @@ impl App {
         });
     }
 
-    fn show_settings(&mut self, ctx: &egui::Context) {
-        if !self.settings || self.lifecycle != Lifecycle::Running {
-            return;
-        }
-
-        egui::Window::new(text::SETTINGS_TITLE)
-            .open(&mut self.settings)
-            .resizable(false)
-            .collapsible(false)
-            .show(ctx, |ui| {
-                theme::group_box(ui, text::GROUP_STORAGE, |ui| {
-                    show_storage_settings(ui, &mut self.config);
-                });
-                ui.label(RichText::new(text::RESTART_NOTICE).color(theme::GRAY_TEXT));
-                if ui.button(text::APPLY_AND_RESTART).clicked() {
-                    self.worker.start(self.config.clone());
-                }
-            });
-    }
-
     fn handle_close(&mut self, ctx: &egui::Context, shutdown: Shutdown) {
         if shutdown == Shutdown::Complete {
             self.lifecycle = Lifecycle::ExitReady;
@@ -244,7 +216,7 @@ impl App {
         }
 
         self.lifecycle = Lifecycle::ShuttingDown;
-        self.settings = false;
+        self.tab = Tab::Status;
         self.worker.shutdown();
         if let Some(tray) = &self.tray {
             tray.disable_recording_controls();
@@ -260,16 +232,25 @@ impl eframe::App for App {
         ctx.request_repaint_after(Duration::from_millis(250));
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
-                self.show_status(ui, &status);
-                self.show_controls(ui, ctx, &status);
+                let selected = theme::tab_strip(
+                    ui,
+                    &[
+                        (Tab::Status, text::TAB_STATUS),
+                        (Tab::Settings, text::TAB_SETTINGS),
+                    ],
+                    &mut self.tab,
+                );
+                theme::tab_page(ui, selected, |ui| match self.tab {
+                    Tab::Status => self.show_status_tab(ui, &status),
+                    Tab::Settings => self.show_settings_tab(ui, &status),
+                });
+                self.show_footer(ui, ctx, &status);
             });
         });
-        self.show_settings(ctx);
     }
 }
 
-/// Only the warnings; the plain memory figures are not shown.
-fn show_memory_status(ui: &mut egui::Ui, sample: &Sample, limit: u64) {
+fn show_memory_warnings(ui: &mut egui::Ui, sample: &Sample, limit: u64) {
     if sample.available_bytes < 1_000_000_000 {
         ui.label(RichText::new(text::LOW_MEMORY_WARNING).color(theme::WARNING_TEXT));
     }

@@ -35,7 +35,7 @@ impl Tray {
         let menu = Menu::new();
         let show = MenuItem::new(format!("Show {APP_NAME}"), true, None);
         let stop_item = MenuItem::new("Stop and restore temporary path", true, None);
-        let quit = MenuItem::new("Quit", true, None);
+        let quit = MenuItem::new(format!("Quit {APP_NAME}"), true, None);
         menu.append_items(&[&show, &stop_item, &quit])?;
 
         let icon = TrayIconBuilder::new()
@@ -91,11 +91,6 @@ impl Tray {
     pub(crate) fn disable_recording_controls(&self) {
         self.stop_item.set_enabled(false);
         self.quit_item.set_enabled(false);
-    }
-
-    pub(crate) fn quit(&self, ctx: &Context) {
-        self.quitting.store(true, Ordering::Relaxed);
-        ctx.send_viewport_cmd(ViewportCommand::Close);
     }
 }
 

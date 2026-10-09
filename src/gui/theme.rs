@@ -25,6 +25,12 @@ const PRESSED_BORDER: Color32 = Color32::from_rgb(0x00, 0x54, 0x99);
 const HIGHLIGHT: Color32 = Color32::from_rgb(0x00, 0x78, 0xD7);
 const GROUP_BORDER: Color32 = Color32::from_rgb(0xDC, 0xDC, 0xDC);
 const BORDER_WIDTH: f32 = 1.0;
+/// The tab page, white like a themed Windows tab control.
+const PAGE: Color32 = Color32::from_rgb(0xFC, 0xFC, 0xFC);
+const TAB_BORDER: Color32 = Color32::from_rgb(0xD9, 0xD9, 0xD9);
+const TAB_HEIGHT: f32 = 22.0;
+const TAB_RAISE: f32 = 2.0;
+const TAB_PADDING_X: f32 = 10.0;
 
 /// Segoe UI 9 pt.
 pub(super) const BODY: f32 = 12.0;
@@ -180,8 +186,100 @@ pub(super) fn group_box<R>(
         egui::pos2(position.x - GROUP_TITLE_PADDING, position.y),
         galley.size() + egui::vec2(2.0 * GROUP_TITLE_PADDING, 0.0),
     );
-    painter.rect_filled(backing, CornerRadius::ZERO, WINDOW_BACKGROUND);
+    // The title sits on the border, over whatever surface the box is drawn on.
+    painter.rect_filled(backing, CornerRadius::ZERO, ui.visuals().panel_fill);
     painter.galley(position, galley, TEXT);
+
+    shown.inner
+}
+
+/// A row of Windows-style tabs; returns the selected tab's rectangle for the page below.
+pub(super) fn tab_strip<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    tabs: &[(T, &str)],
+    selected: &mut T,
+) -> Option<egui::Rect> {
+    let mut selected_rect = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for &(value, label) in tabs {
+            let active = value == *selected;
+            let galley =
+                ui.painter()
+                    .layout_no_wrap(label.to_owned(), FontId::proportional(BODY), TEXT);
+            let size = egui::vec2(
+                galley.size().x + 2.0 * TAB_PADDING_X,
+                TAB_HEIGHT + TAB_RAISE,
+            );
+            let (allocated, response) = ui.allocate_exact_size(size, egui::Sense::click());
+            if response.clicked() {
+                *selected = value;
+            }
+
+            // Inactive tabs sit lower than the selected one, which joins the page.
+            let rect = if active {
+                allocated
+            } else {
+                egui::Rect::from_min_max(
+                    egui::pos2(allocated.min.x, allocated.min.y + TAB_RAISE),
+                    allocated.max,
+                )
+            };
+            let fill = if active {
+                PAGE
+            } else if response.hovered() {
+                BUTTON_HOVER
+            } else {
+                WINDOW_BACKGROUND
+            };
+            let painter = ui.painter();
+            painter.rect_filled(rect, CornerRadius::ZERO, fill);
+            let stroke = Stroke::new(BORDER_WIDTH, TAB_BORDER);
+            painter.line_segment([rect.left_bottom(), rect.left_top()], stroke);
+            painter.line_segment([rect.left_top(), rect.right_top()], stroke);
+            painter.line_segment([rect.right_top(), rect.right_bottom()], stroke);
+            painter.galley(
+                egui::pos2(
+                    rect.center().x - galley.size().x / 2.0,
+                    rect.center().y - galley.size().y / 2.0,
+                ),
+                galley,
+                TEXT,
+            );
+            if active {
+                selected_rect = Some(rect);
+            }
+        }
+    });
+
+    selected_rect
+}
+
+/// The page under the tab strip, joined to the selected tab.
+pub(super) fn tab_page<R>(
+    ui: &mut egui::Ui,
+    selected_tab: Option<egui::Rect>,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.add_space(-ui.spacing().item_spacing.y);
+    let shown = egui::Frame::new()
+        .fill(PAGE)
+        .stroke(Stroke::new(BORDER_WIDTH, TAB_BORDER))
+        .inner_margin(Margin::same(10))
+        .show(ui, |ui| {
+            ui.style_mut().visuals.panel_fill = PAGE;
+            ui.set_width(ui.available_width());
+            add_contents(ui)
+        });
+
+    if let Some(tab) = selected_tab {
+        let top = shown.response.rect.top();
+        let opening = egui::Rect::from_min_max(
+            egui::pos2(tab.left() + BORDER_WIDTH, top),
+            egui::pos2(tab.right() - BORDER_WIDTH, top + BORDER_WIDTH),
+        );
+        ui.painter().rect_filled(opening, CornerRadius::ZERO, PAGE);
+    }
 
     shown.inner
 }
