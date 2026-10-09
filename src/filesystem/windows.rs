@@ -58,6 +58,8 @@ pub(super) fn dispatch() -> Result<bool> {
 }
 
 fn run(config: &Config) -> Result<()> {
+    // The GUI already holds the application's bus identity; a duplicate would be dropped.
+    crate::sys::shadowplay::set_role(crate::sys::shadowplay::Role::Supervisor);
     let redirect = super::read_redirect(&mut io::stdin().lock(), config)?;
     let mut filesystem = Helper::start_memefs(config).context("start bundled MemFS Extended")?;
 

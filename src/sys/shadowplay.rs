@@ -40,9 +40,26 @@ const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
 const CREATE_PARAMS_VERSION: u32 = 0x0001_0018;
 /// The first-generation `IShadowPlayApi` table; its first eight methods are used here.
 const INTERFACE_VERSION: u32 = 0x0001_0008;
-/// Client 6 joins the message bus as `ShadowPlayApi_TestingTool`. The library accepts 3
-/// through 11; 5 is the overlay itself, and a second registration under its name is dropped.
-const CLIENT: u32 = 6;
+/// Each client id joins the message bus under its own module name, and a second registration
+/// under a name already in use is dropped (its calls then time out). The library accepts 3
+/// through 11; 5 is the overlay itself. The application uses 6 (`ShadowPlayApi_TestingTool`)
+/// and its supervisor process 3 (`ShadowPlayApi_Installer`), so both can be connected at once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Role {
+    Application,
+    Supervisor,
+}
+
+impl Role {
+    const fn client(self) -> u32 {
+        match self {
+            Self::Application => 6,
+            Self::Supervisor => 3,
+        }
+    }
+}
+
+static ROLE: Mutex<Role> = Mutex::new(Role::Application);
 /// Low 16 bits: `size_of::<PropertyArgs>()`.
 const PROPERTY_ARGS_VERSION: u32 = 0x0001_0060;
 const PROPERTY_NAME_CAPACITY: usize = 64;
@@ -216,6 +233,13 @@ pub(crate) fn instant_replay_running() -> Result<bool, ApiError> {
     with_api(Api::instant_replay_running)
 }
 
+/// Choose the bus identity before the first call; the supervisor must differ from the GUI.
+pub(crate) fn set_role(role: Role) {
+    if let Ok(mut current) = ROLE.lock() {
+        *current = role;
+    }
+}
+
 fn with_api<T>(call: impl FnOnce(&Api) -> Result<T, ApiError>) -> Result<T, ApiError> {
     let mut shared = SHARED.lock().map_err(|_| ApiError::Lock)?;
     if shared.is_none() {
@@ -252,11 +276,12 @@ impl Api {
         let create =
             unsafe { std::mem::transmute::<unsafe extern "system" fn(), CreateInterface>(export) };
 
+        let role = ROLE.lock().map(|role| *role).map_err(|_| ApiError::Lock)?;
         let mut interface: *mut c_void = ptr::null_mut();
         let mut params = CreateParams {
             version: CREATE_PARAMS_VERSION,
             interface_version: INTERFACE_VERSION,
-            client: CLIENT,
+            client: role.client(),
             interface: &raw mut interface,
         };
         // SAFETY: `params` matches the version it declares; both pointers outlive the call.

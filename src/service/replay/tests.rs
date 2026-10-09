@@ -75,7 +75,8 @@ fn restarts_a_capturing_instant_replay_around_the_change() {
     assert_eq!(fake.toggles, 2);
     assert!(fake.running);
     assert_eq!(changed_while_stopped, Some(true));
-    assert_eq!(fake.pauses, 5);
+    // Three polls to see the stop, the grace pause before the restart, two polls to see the start.
+    assert_eq!(fake.pauses, 6);
 }
 
 #[test]

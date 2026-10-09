@@ -9,6 +9,9 @@ use std::{fmt::Display, time::Duration};
 const SETTLE_POLL: Duration = Duration::from_millis(100);
 /// Five seconds of polling at `SETTLE_POLL`.
 const SETTLE_POLLS: usize = 50;
+/// The overlay ignores the hotkey while it is still tearing down the stopped capture session,
+/// which outlasts the engine's "not capturing" report; a press 100 ms later was dropped.
+const RESTART_GRACE: Duration = Duration::from_millis(1500);
 
 /// The overlay's Instant Replay, observed and driven as the user would.
 pub(crate) trait Controls {
@@ -64,6 +67,7 @@ fn stop(controls: &mut impl Controls) -> Result<(), String> {
 }
 
 fn start(controls: &mut impl Controls) -> Result<(), String> {
+    controls.pause(RESTART_GRACE);
     controls
         .toggle()
         .map_err(|error| format!("start Instant Replay: {error}"))?;
