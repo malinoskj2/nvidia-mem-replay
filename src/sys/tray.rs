@@ -1,9 +1,9 @@
+//! The notification-area icon and its menu. Its callbacks run on the window's own thread
+//! (the library delivers them from a hidden window's message handler), so they hand the
+//! action straight to the window through a thread-local callback.
+
 use crate::APP_NAME;
-use eframe::egui::{Context, ViewportCommand};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::{cell::RefCell, rc::Rc};
 use thiserror::Error;
 use tray_icon::{
     Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
@@ -20,18 +20,29 @@ pub(crate) enum TrayError {
     Image(#[from] tray_icon::BadIcon),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TrayAction {
+    Show,
+    Stop,
+    Quit,
+}
+
+type Handler = Rc<dyn Fn(TrayAction)>;
+
+thread_local! {
+    static HANDLER: RefCell<Option<Handler>> = const { RefCell::new(None) };
+}
+
 pub(crate) struct Tray {
     _icon: TrayIcon,
-    quitting: Arc<AtomicBool>,
     stop_item: MenuItem,
     quit_item: MenuItem,
 }
 
 impl Tray {
-    pub(crate) fn new(
-        ctx: &Context,
-        stop: impl Fn() + Send + Sync + 'static,
-    ) -> Result<Self, TrayError> {
+    pub(crate) fn new(on_action: impl Fn(TrayAction) + 'static) -> Result<Self, TrayError> {
+        HANDLER.with(|handler| *handler.borrow_mut() = Some(Rc::new(on_action)));
+
         let menu = Menu::new();
         let show = MenuItem::new(format!("Show {APP_NAME}"), true, None);
         let stop_item = MenuItem::new("Stop and restore temporary path", true, None);
@@ -45,47 +56,41 @@ impl Tray {
             .with_menu_on_left_click(false)
             .build()?;
 
-        let tray = Self {
+        let (show_id, stop_id, quit_id) =
+            (show.id().clone(), stop_item.id().clone(), quit.id().clone());
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            let action = if event.id == show_id {
+                TrayAction::Show
+            } else if event.id == stop_id {
+                TrayAction::Stop
+            } else if event.id == quit_id {
+                TrayAction::Quit
+            } else {
+                return;
+            };
+            dispatch(action);
+        }));
+        TrayIconEvent::set_event_handler(Some(|event| {
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } | TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                }
+            ) {
+                dispatch(TrayAction::Show);
+            }
+        }));
+
+        Ok(Self {
             _icon: icon,
-            quitting: Arc::new(AtomicBool::new(false)),
             stop_item,
             quit_item: quit,
-        };
-        tray.register_menu_handler(ctx, &show, stop);
-        register_icon_handler(ctx);
-
-        Ok(tray)
-    }
-
-    fn register_menu_handler(
-        &self,
-        ctx: &Context,
-        show: &MenuItem,
-        stop: impl Fn() + Send + Sync + 'static,
-    ) {
-        let quitting = Arc::clone(&self.quitting);
-        let context = ctx.clone();
-        let show_id = show.id().clone();
-        let stop_id = self.stop_item.id().clone();
-        let quit_id = self.quit_item.id().clone();
-
-        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            if event.id == show_id {
-                show_window(&context);
-            } else if event.id == stop_id {
-                stop();
-                show_window(&context);
-            } else if event.id == quit_id {
-                quitting.store(true, Ordering::Relaxed);
-                show_window(&context);
-                context.send_viewport_cmd(ViewportCommand::Close);
-            }
-            context.request_repaint();
-        }));
-    }
-
-    pub(crate) fn quitting(&self) -> bool {
-        self.quitting.load(Ordering::Relaxed)
+        })
     }
 
     pub(crate) fn disable_recording_controls(&self) {
@@ -98,43 +103,16 @@ impl Drop for Tray {
     fn drop(&mut self) {
         MenuEvent::set_event_handler(None::<fn(MenuEvent)>);
         TrayIconEvent::set_event_handler(None::<fn(TrayIconEvent)>);
+        HANDLER.with(|handler| handler.borrow_mut().take());
     }
 }
 
-fn register_icon_handler(ctx: &Context) {
-    let context = ctx.clone();
-    TrayIconEvent::set_event_handler(Some(move |event| {
-        if matches!(
-            event,
-            TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } | TrayIconEvent::DoubleClick {
-                button: MouseButton::Left,
-                ..
-            }
-        ) {
-            show_window(&context);
-            context.request_repaint();
-        }
-    }));
-}
-
-fn show_window(ctx: &Context) {
-    // Hidden Windows windows cannot repaint to process queued viewport commands.
-    let _ = winsafe::EnumThreadWindows(winsafe::GetCurrentThreadId(), |window| {
-        if window.GetWindowText().is_ok_and(|title| title == APP_NAME) {
-            window.ShowWindow(winsafe::co::SW::RESTORE);
-            let _ = window.SetForegroundWindow();
-            return false;
-        }
-
-        true
-    });
-    ctx.send_viewport_cmd(ViewportCommand::Visible(true));
-    ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
-    ctx.send_viewport_cmd(ViewportCommand::Focus);
+/// The callback is cloned out first, so it may itself replace or drop the tray.
+fn dispatch(action: TrayAction) {
+    let handler = HANDLER.with(|handler| handler.borrow().clone());
+    if let Some(handler) = handler {
+        handler(action);
+    }
 }
 
 fn replay_icon() -> Result<Icon, tray_icon::BadIcon> {

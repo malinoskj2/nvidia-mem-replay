@@ -29,8 +29,8 @@ Closing keeps recording active. Left-click the tray icon to reopen. The menu
 provides Show, Stop and restore, and Quit. Stop and Quit restore NVIDIA's original
 temporary path before unmounting and discarding RAM. If the tray cannot be
 created, closing exits and the GUI explains the fallback.
-Tray actions show the native window directly before queuing GUI commands, since
-a hidden Windows window cannot repaint to process those commands.
+Tray menu and click events are delivered on the window's own thread, so the
+handlers act on the window directly (`src/sys/tray.rs`).
 Quit waits for cleanup to finish. If cleanup fails, the window shows the error
 and offers **Retry shutdown** or **Exit anyway**. A failed restoration keeps its
 recovery journal for the next launch; the original path can also be restored
@@ -126,10 +126,21 @@ cycle and a notice is shown.
 `--tray` starts the window hidden; the Start-with-Windows setting writes that
 command line to the user's `Run` key (`src/sys/startup.rs`).
 
-The icon is rendered by `src/sys/icon.rs` for the tray and the window, and the
-same renderer writes `assets/nvidia-mem-replay.ico`, which `build.rs` embeds in
-the executable (Start menu, Explorer, installer shortcuts). After changing the
-renderer, regenerate the file with
+The window (`src/gui.rs`) is built from the Windows common controls through
+[winsafe](https://github.com/rodrigocfd/winsafe)'s `gui` module: a tab control
+with two child pages, static labels, a combo box, an edit with an up-down
+buddy, a check box and push buttons, all in the system message font. `build.rs`
+embeds a manifest that opts into Common Controls 6 (visual styles) and DPI
+awareness; without it the controls draw in the Windows 95 style. Group-box
+frames are painted by the pages themselves with `DrawThemeBackground` and a
+label for the title, because a child group-box control never erases its
+interior and the pages clip their children, which left stale pixels inside the
+boxes. Coloured status lines are tinted in `WM_CTLCOLORSTATIC`.
+
+The icon is rendered by `src/sys/icon.rs` for the tray, and the same renderer
+writes `assets/nvidia-mem-replay.ico`, which `build.rs` embeds as icon
+resource 1 (Start menu, Explorer, installer shortcuts, and the window class).
+After changing the renderer, regenerate the file with
 `cargo run -- icon assets/nvidia-mem-replay.ico`; a unit test fails while the
 two differ. The title bar is set to the flat dialog colour with
 `DwmSetWindowAttribute` (`src/sys/window.rs`), since Windows 11 would
@@ -188,10 +199,9 @@ capacity failure, owner EOF handling and unmount. The supervisor's restoration
 leaves a location that is not its own untouched, so the script verifies that
 the live NVIDIA setting is unchanged rather than redirecting it.
 Installation, filesystem behavior, tray controls and recovery can also be tested
-in a Windows VM with a synthetic `TempFilePath` setting. The GUI requires OpenGL
-2.0+, so a VM with only a basic display adapter needs a software renderer for
-GUI testing. NVIDIA recording, overlay setting reloads and actual replay saving
-still require a Windows NVIDIA machine.
+in a Windows VM with a synthetic `TempFilePath` setting; the window uses the
+standard Windows controls and needs no GPU. NVIDIA recording, overlay setting
+reloads and actual replay saving still require a Windows NVIDIA machine.
 
 ## Verified builds and optional releases
 

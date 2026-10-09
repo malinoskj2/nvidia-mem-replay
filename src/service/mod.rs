@@ -169,11 +169,6 @@ impl Worker {
         self.control.request(Command::Start(config));
     }
 
-    pub(crate) fn stop_handle(&self) -> impl Fn() + Send + Sync + 'static {
-        let control = self.control.clone();
-        move || control.request(Command::Stop)
-    }
-
     pub(crate) fn stop(&self) {
         self.control.request(Command::Stop);
     }

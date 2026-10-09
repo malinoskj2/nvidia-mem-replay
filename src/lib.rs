@@ -10,9 +10,6 @@ mod sys;
 mod telemetry;
 
 pub(crate) const APP_NAME: &str = "nvidia-mem-replay";
-/// Pixel size of the window icon handed to the window system.
-#[cfg(windows)]
-const ICON_SIZE: u32 = 64;
 
 #[cfg(not(windows))]
 const UNSUPPORTED_PLATFORM_MESSAGE: &str =
@@ -39,29 +36,7 @@ pub fn run() -> Result<()> {
         Ok((worker, config))
     })();
 
-    let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_title(APP_NAME)
-            .with_icon(eframe::egui::IconData {
-                rgba: sys::icon::rgba(ICON_SIZE),
-                width: ICON_SIZE,
-                height: ICON_SIZE,
-            })
-            .with_visible(!tray)
-            .with_inner_size([460.0, 345.0])
-            .with_min_inner_size([420.0, 320.0]),
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        APP_NAME,
-        options,
-        Box::new(move |cc| match startup {
-            Ok((worker, config)) => Ok(Box::new(gui::App::new(cc, worker, config, tray))),
-            Err(error) => Ok(Box::new(gui::StartupError::new(cc, format!("{error:#}")))),
-        }),
-    )
-    .map_err(|error| anyhow::anyhow!("open desktop window: {error}"))
+    gui::run(startup, tray)
 }
 
 /// The recording application is available on Windows only.
