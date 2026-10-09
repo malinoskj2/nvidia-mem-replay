@@ -23,9 +23,13 @@ const STATUS_INTERVAL_MS: u32 = 250;
 const ICON_RESOURCE: u16 = 1;
 
 const WINDOW_WIDTH: i32 = 470;
-const WINDOW_HEIGHT: i32 = 396;
+const WINDOW_HEIGHT: i32 = 374;
 const MARGIN: i32 = 8;
-const TAB_HEIGHT: i32 = 346;
+const TAB_HEIGHT: i32 = 324;
+/// Height the Startup group gains while it shows a Run-key error line.
+const STARTUP_ERROR_EXTRA: i32 = LINE + 4;
+const STARTUP_FRAME: usize = 1;
+const RECORDING_FRAME: usize = 2;
 const PAGE_WIDTH: i32 = WINDOW_WIDTH - 2 * MARGIN - 8;
 const GROUP_X: i32 = 8;
 const GROUP_WIDTH: i32 = PAGE_WIDTH - 2 * GROUP_X;
@@ -66,6 +70,9 @@ struct Shared {
     state_colour: w::COLORREF,
     path_colour: w::COLORREF,
     notice_colour: w::COLORREF,
+    /// A Run-key error found before the window existed, shown once it does.
+    initial_startup_error: Option<String>,
+    startup_error_shown: bool,
 }
 
 #[derive(Clone)]
@@ -98,7 +105,8 @@ struct StatusPage {
 #[derive(Clone)]
 struct SettingsPage {
     page: gui::TabPage,
-    frames: Vec<Frame>,
+    /// Shared with the paint handler; the Startup frame grows while it shows an error.
+    frames: Rc<RefCell<Vec<Frame>>>,
     ceiling: gui::Edit,
     _ceiling_spin: gui::UpDown,
     apply: gui::Button,
@@ -296,9 +304,8 @@ impl SettingsPage {
         let page = gui::TabPage::new(parent, gui::TabPageOpts::default());
         let storage = Self::storage_controls(&page, config);
 
-        // Tall enough for the error line under the help text, which otherwise paints over
-        // the frame's bottom edge.
-        let startup_group = frame(&page, text::GROUP_STARTUP, 120, 100);
+        // Compact; `show_startup_error` adds a line for the error label when one occurs.
+        let startup_group = frame(&page, text::GROUP_STARTUP, 120, 78);
         let start_with_windows = gui::CheckBox::new(
             &page,
             gui::CheckBoxOpts {
@@ -322,14 +329,18 @@ impl SettingsPage {
         );
         let startup_error = label(&page, "", INNER_X, 160 + 2 * LINE, INNER_WIDTH, 1);
 
-        let recording_group = frame(&page, text::GROUP_RECORDING, 228, 90);
-        let recording_help = label(&page, "", INNER_X, 248, INNER_WIDTH, 2);
-        let recording = button(&page, text::STOP_AND_RESTORE, INNER_X, 286, 120);
+        let recording_group = frame(&page, text::GROUP_RECORDING, 206, 90);
+        let recording_help = label(&page, "", INNER_X, 226, INNER_WIDTH, 2);
+        let recording = button(&page, text::STOP_AND_RESTORE, INNER_X, 264, 120);
 
-        let frames = vec![storage.group, startup_group, recording_group];
-        let (paint_page, paint_frames_list) = (page.clone(), frames.clone());
+        let frames = Rc::new(RefCell::new(vec![
+            storage.group,
+            startup_group,
+            recording_group,
+        ]));
+        let (paint_page, paint_frames_list) = (page.clone(), Rc::clone(&frames));
         page.on().wm_paint(move || {
-            paint_frames(paint_page.hwnd(), &paint_frames_list);
+            paint_frames(paint_page.hwnd(), &paint_frames_list.borrow());
             Ok(())
         });
 
@@ -390,6 +401,21 @@ impl SettingsPage {
             apply,
             settings_error,
         }
+    }
+
+    /// Makes the Startup group `delta` pixels taller (negative to shrink) and moves the
+    /// Recording group with it.
+    fn grow_startup(&self, delta: i32) {
+        {
+            let mut frames = self.frames.borrow_mut();
+            frames[STARTUP_FRAME].rect.bottom += delta;
+            frames[RECORDING_FRAME].rect.top += delta;
+            frames[RECORDING_FRAME].rect.bottom += delta;
+            shift_by(frames[RECORDING_FRAME].title.hwnd(), delta);
+        }
+        shift_by(self.recording_help.hwnd(), delta);
+        shift_by(self.recording.hwnd(), delta);
+        let _ = self.page.hwnd().InvalidateRect(None, true);
     }
 
     /// The configuration as currently entered, or the problem with it.
@@ -489,11 +515,10 @@ impl Main {
                 state_colour: GRAY,
                 path_colour: GRAY,
                 notice_colour: AMBER,
+                initial_startup_error: startup_error,
+                startup_error_shown: false,
             })),
         };
-        if let Some(error) = startup_error {
-            let _ = main.settings.startup_error.hwnd().SetWindowText(&error);
-        }
         main.events();
 
         let show = if start_hidden {
@@ -587,7 +612,7 @@ impl Main {
     fn on_create(&self) {
         window::match_dialog_title_bar(self.wnd.hwnd());
         fit_titles(&self.status.frames);
-        fit_titles(&self.settings.frames);
+        fit_titles(&self.settings.frames.borrow());
         let _ = self
             .wnd
             .hwnd()
@@ -595,6 +620,11 @@ impl Main {
         self.retry_shutdown.hwnd().ShowWindow(co::SW::HIDE);
         self.exit_anyway.hwnd().ShowWindow(co::SW::HIDE);
         self.shutdown_text.hwnd().ShowWindow(co::SW::HIDE);
+        self.settings.startup_error.hwnd().ShowWindow(co::SW::HIDE);
+        let initial_error = self.shared.borrow_mut().initial_startup_error.take();
+        if let Some(error) = initial_error {
+            self.show_startup_error(Some(&error));
+        }
 
         let me = self.clone();
         match Tray::new(move |action| me.on_tray(action)) {
@@ -793,14 +823,64 @@ impl Main {
     fn toggle_startup(&self) {
         let wanted = self.settings.start_with_windows.is_checked();
         match startup::set(wanted) {
-            Ok(()) => set_text(&self.settings.startup_error, ""),
+            Ok(()) => self.show_startup_error(None),
             Err(error) => {
                 self.settings.start_with_windows.set_check(!wanted);
-                set_text(
-                    &self.settings.startup_error,
-                    &text::startup_setting_failed(&error),
-                );
+                self.show_startup_error(Some(&text::startup_setting_failed(&error)));
             }
+        }
+    }
+
+    /// The Startup group stays compact until a Run-key error needs its extra line; the
+    /// Recording group, the tab and the window grow with it and shrink back once it clears.
+    fn show_startup_error(&self, message: Option<&str>) {
+        set_text(&self.settings.startup_error, message.unwrap_or(""));
+        let shown = message.is_some();
+        self.settings.startup_error.hwnd().ShowWindow(if shown {
+            co::SW::SHOW
+        } else {
+            co::SW::HIDE
+        });
+
+        let changed = {
+            let mut shared = self.shared.borrow_mut();
+            let changed = shared.startup_error_shown != shown;
+            shared.startup_error_shown = shown;
+            changed
+        };
+        if !changed {
+            return;
+        }
+
+        let delta = gui::dpi_y(if shown {
+            STARTUP_ERROR_EXTRA
+        } else {
+            -STARTUP_ERROR_EXTRA
+        });
+        self.settings.grow_startup(delta);
+        for window in [
+            self.wnd.hwnd(),
+            self.tab.hwnd(),
+            self.status.page.hwnd(),
+            self.settings.page.hwnd(),
+        ] {
+            resize_by(window, delta);
+        }
+        for window in [
+            self.footer.hwnd(),
+            self.shutdown_text.hwnd(),
+            self.retry_shutdown.hwnd(),
+            self.exit_anyway.hwnd(),
+        ] {
+            shift_by(window, delta);
+        }
+        // Moved controls and the strip the shorter window uncovers keep stale pixels otherwise.
+        if let Ok(client) = self.wnd.hwnd().GetClientRect() {
+            let _ = self.wnd.hwnd().RedrawWindow(
+                client,
+                &w::HRGN::NULL,
+                co::RDW::INVALIDATE | co::RDW::ERASE | co::RDW::ALLCHILDREN,
+            );
         }
     }
 
@@ -827,6 +907,38 @@ impl Main {
         let _ = p.hdc.SetBkMode(co::BKMODE::TRANSPARENT);
         w::HBRUSH::GetSysColorBrush(background).unwrap_or(w::HBRUSH::NULL)
     }
+}
+
+/// Moves a child window down by `delta` pixels (up when negative).
+fn shift_by(window: &w::HWND, delta: i32) {
+    let Ok(parent) = window.GetParent() else {
+        return;
+    };
+    let Ok(rect) = window
+        .GetWindowRect()
+        .and_then(|rect| parent.ScreenToClientRc(rect))
+    else {
+        return;
+    };
+    let _ = window.SetWindowPos(
+        w::HwndPlace::None,
+        w::POINT::with(rect.left, rect.top + delta),
+        w::SIZE::default(),
+        co::SWP::NOSIZE | co::SWP::NOZORDER | co::SWP::NOACTIVATE | co::SWP::NOCOPYBITS,
+    );
+}
+
+/// Makes a window `delta` pixels taller (shorter when negative), keeping its position.
+fn resize_by(window: &w::HWND, delta: i32) {
+    let Ok(rect) = window.GetWindowRect() else {
+        return;
+    };
+    let _ = window.SetWindowPos(
+        w::HwndPlace::None,
+        w::POINT::default(),
+        w::SIZE::with(rect.right - rect.left, rect.bottom - rect.top + delta),
+        co::SWP::NOMOVE | co::SWP::NOZORDER | co::SWP::NOACTIVATE | co::SWP::NOCOPYBITS,
+    );
 }
 
 fn set_text(label: &gui::Label, value: &str) {
