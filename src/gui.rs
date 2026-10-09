@@ -28,6 +28,10 @@ const MARGIN: i32 = 8;
 const TAB_HEIGHT: i32 = 324;
 /// Height the Startup group gains while it shows a Run-key error line.
 const STARTUP_ERROR_EXTRA: i32 = LINE + 4;
+/// Height the Status group gains while it shows warnings, notices or errors (two lines).
+const STATUS_NOTICE_EXTRA: i32 = 2 * LINE + 4;
+const STATUS_FRAME: usize = 0;
+const LOCATIONS_FRAME: usize = 1;
 const STARTUP_FRAME: usize = 1;
 const RECORDING_FRAME: usize = 2;
 const PAGE_WIDTH: i32 = WINDOW_WIDTH - 2 * MARGIN - 8;
@@ -72,7 +76,11 @@ struct Shared {
     notice_colour: w::COLORREF,
     /// A Run-key error found before the window existed, shown once it does.
     initial_startup_error: Option<String>,
-    startup_error_shown: bool,
+    /// Extra height each page currently needs for an expanded message, and the extra the
+    /// window has been given (the larger of the two).
+    status_extra: i32,
+    settings_extra: i32,
+    window_extra: i32,
 }
 
 #[derive(Clone)]
@@ -91,7 +99,10 @@ struct Main {
 #[derive(Clone)]
 struct StatusPage {
     page: gui::TabPage,
-    frames: Vec<Frame>,
+    /// Shared with the paint handler; the Status frame grows while it shows a notice.
+    frames: Rc<RefCell<Vec<Frame>>>,
+    /// Everything under the notice, moved along when the Status group grows.
+    below: Vec<gui::Label>,
     state: gui::Label,
     written: gui::Label,
     buffer: gui::Label,
@@ -216,7 +227,8 @@ impl StatusPage {
     fn new(parent: &(impl GuiParent + 'static)) -> Self {
         let page = gui::TabPage::new(parent, gui::TabPageOpts::default());
 
-        let status_group = frame(&page, text::GROUP_STATUS, 6, 124);
+        // Compact; `show_status_notice` adds two lines for the notice label when needed.
+        let status_group = frame(&page, text::GROUP_STATUS, 6, 86);
         let state = label(&page, "", INNER_X, 26, INNER_WIDTH, 1);
         let _written_caption = label(
             &page,
@@ -238,46 +250,55 @@ impl StatusPage {
         let buffer = label(&page, "", VALUE_X, 68, VALUE_WIDTH, 1);
         let notice = label(&page, "", INNER_X, 90, INNER_WIDTH, 2);
 
-        let locations_group = frame(&page, text::GROUP_LOCATIONS, 138, 112);
-        let path_state = label(&page, "", INNER_X, 158, INNER_WIDTH, 1);
-        let _original_caption = label(
+        let locations_group = frame(&page, text::GROUP_LOCATIONS, 100, 112);
+        let path_state = label(&page, "", INNER_X, 120, INNER_WIDTH, 1);
+        let original_caption = label(
             &page,
             text::ORIGINAL_LOCATION,
             INNER_X,
-            180,
+            142,
             VALUE_X - INNER_X,
             1,
         );
-        let original = path_label(&page, VALUE_X, 180, VALUE_WIDTH);
-        let _ram_caption = label(
+        let original = path_label(&page, VALUE_X, 142, VALUE_WIDTH);
+        let ram_caption = label(
             &page,
             text::RAM_LOCATION,
             INNER_X,
-            200,
+            162,
             VALUE_X - INNER_X,
             1,
         );
-        let ram = path_label(&page, VALUE_X, 200, VALUE_WIDTH);
-        let _ceiling_caption = label(
+        let ram = path_label(&page, VALUE_X, 162, VALUE_WIDTH);
+        let ceiling_caption = label(
             &page,
             text::BUFFER_CEILING,
             INNER_X,
-            220,
+            182,
             VALUE_X - INNER_X,
             1,
         );
-        let ceiling = label(&page, "", VALUE_X, 220, VALUE_WIDTH, 1);
+        let ceiling = label(&page, "", VALUE_X, 182, VALUE_WIDTH, 1);
 
-        let frames = vec![status_group, locations_group];
-        let (paint_page, paint_frames_list) = (page.clone(), frames.clone());
+        let frames = Rc::new(RefCell::new(vec![status_group, locations_group]));
+        let (paint_page, paint_frames_list) = (page.clone(), Rc::clone(&frames));
         page.on().wm_paint(move || {
-            paint_frames(paint_page.hwnd(), &paint_frames_list);
+            paint_frames(paint_page.hwnd(), &paint_frames_list.borrow());
             Ok(())
         });
 
         Self {
             page,
             frames,
+            below: vec![
+                path_state.clone(),
+                original_caption,
+                original.clone(),
+                ram_caption,
+                ram.clone(),
+                ceiling_caption,
+                ceiling.clone(),
+            ],
             state,
             written,
             buffer,
@@ -287,6 +308,22 @@ impl StatusPage {
             ram,
             ceiling,
         }
+    }
+
+    /// Makes the Status group `delta` pixels taller (negative to shrink) and moves the
+    /// Temporary files group with it.
+    fn grow_status(&self, delta: i32) {
+        {
+            let mut frames = self.frames.borrow_mut();
+            frames[STATUS_FRAME].rect.bottom += delta;
+            frames[LOCATIONS_FRAME].rect.top += delta;
+            frames[LOCATIONS_FRAME].rect.bottom += delta;
+            shift_by(frames[LOCATIONS_FRAME].title.hwnd(), delta);
+        }
+        for control in &self.below {
+            shift_by(control.hwnd(), delta);
+        }
+        let _ = self.page.hwnd().InvalidateRect(None, true);
     }
 }
 
@@ -516,7 +553,9 @@ impl Main {
                 path_colour: GRAY,
                 notice_colour: AMBER,
                 initial_startup_error: startup_error,
-                startup_error_shown: false,
+                status_extra: 0,
+                settings_extra: 0,
+                window_extra: 0,
             })),
         };
         main.events();
@@ -611,7 +650,7 @@ impl Main {
 
     fn on_create(&self) {
         window::match_dialog_title_bar(self.wnd.hwnd());
-        fit_titles(&self.status.frames);
+        fit_titles(&self.status.frames.borrow());
         fit_titles(&self.settings.frames.borrow());
         let _ = self
             .wnd
@@ -621,6 +660,7 @@ impl Main {
         self.exit_anyway.hwnd().ShowWindow(co::SW::HIDE);
         self.shutdown_text.hwnd().ShowWindow(co::SW::HIDE);
         self.settings.startup_error.hwnd().ShowWindow(co::SW::HIDE);
+        self.status.notice.hwnd().ShowWindow(co::SW::HIDE);
         let initial_error = self.shared.borrow_mut().initial_startup_error.take();
         if let Some(error) = initial_error {
             self.show_startup_error(Some(&error));
@@ -739,7 +779,7 @@ impl Main {
             &self.status.buffer,
             &text::buffer_allocated(status.sample.as_ref().map(|sample| sample.buffer_bytes)),
         );
-        set_text(&self.status.notice, &notices.join("\r\n"));
+        self.show_status_notice(&notices.join("\r\n"));
         set_text(
             &self.status.path_state,
             &text::status(if status.mounted {
@@ -835,46 +875,64 @@ impl Main {
     /// Recording group, the tab and the window grow with it and shrink back once it clears.
     fn show_startup_error(&self, message: Option<&str>) {
         set_text(&self.settings.startup_error, message.unwrap_or(""));
-        let shown = message.is_some();
-        self.settings.startup_error.hwnd().ShowWindow(if shown {
-            co::SW::SHOW
-        } else {
-            co::SW::HIDE
-        });
-
-        let changed = {
-            let mut shared = self.shared.borrow_mut();
-            let changed = shared.startup_error_shown != shown;
-            shared.startup_error_shown = shown;
-            changed
-        };
-        if !changed {
-            return;
-        }
-
-        let delta = gui::dpi_y(if shown {
+        let extra = if message.is_some() {
             STARTUP_ERROR_EXTRA
         } else {
-            -STARTUP_ERROR_EXTRA
-        });
-        self.settings.grow_startup(delta);
-        for window in [
-            self.wnd.hwnd(),
-            self.tab.hwnd(),
-            self.status.page.hwnd(),
-            self.settings.page.hwnd(),
-        ] {
-            resize_by(window, delta);
+            0
+        };
+        let previous = std::mem::replace(&mut self.shared.borrow_mut().settings_extra, extra);
+        if previous != extra {
+            show(&self.settings.startup_error, extra > 0);
+            self.settings.grow_startup(gui::dpi_y(extra - previous));
+            self.fit_window();
         }
-        for window in [
-            self.footer.hwnd(),
-            self.shutdown_text.hwnd(),
-            self.retry_shutdown.hwnd(),
-            self.exit_anyway.hwnd(),
-        ] {
-            shift_by(window, delta);
+    }
+
+    /// The Status group likewise grows only while a warning, notice or error is displayed.
+    fn show_status_notice(&self, message: &str) {
+        set_text(&self.status.notice, message);
+        let extra = if message.is_empty() {
+            0
+        } else {
+            STATUS_NOTICE_EXTRA
+        };
+        let previous = std::mem::replace(&mut self.shared.borrow_mut().status_extra, extra);
+        if previous != extra {
+            show(&self.status.notice, extra > 0);
+            self.status.grow_status(gui::dpi_y(extra - previous));
+            self.fit_window();
         }
-        // Moved controls and the strip the shorter window uncovers keep stale pixels otherwise.
+    }
+
+    /// Gives the window, the tab and both pages the larger of the two pages' extra heights,
+    /// moving the footer controls along, and repaints everything.
+    fn fit_window(&self) {
+        let delta = {
+            let mut shared = self.shared.borrow_mut();
+            let wanted = shared.status_extra.max(shared.settings_extra);
+            let delta = wanted - shared.window_extra;
+            shared.window_extra = wanted;
+            gui::dpi_y(delta)
+        };
+        if delta != 0 {
+            for window in [
+                self.wnd.hwnd(),
+                self.tab.hwnd(),
+                self.status.page.hwnd(),
+                self.settings.page.hwnd(),
+            ] {
+                resize_by(window, delta);
+            }
+            for window in [
+                self.footer.hwnd(),
+                self.shutdown_text.hwnd(),
+                self.retry_shutdown.hwnd(),
+                self.exit_anyway.hwnd(),
+            ] {
+                shift_by(window, delta);
+            }
+        }
+        // Moved controls and the strip a shorter window uncovers keep stale pixels otherwise.
         if let Ok(client) = self.wnd.hwnd().GetClientRect() {
             let _ = self.wnd.hwnd().RedrawWindow(
                 client,
@@ -939,6 +997,12 @@ fn resize_by(window: &w::HWND, delta: i32) {
         w::SIZE::with(rect.right - rect.left, rect.bottom - rect.top + delta),
         co::SWP::NOMOVE | co::SWP::NOZORDER | co::SWP::NOACTIVATE | co::SWP::NOCOPYBITS,
     );
+}
+
+fn show(label: &gui::Label, visible: bool) {
+    label
+        .hwnd()
+        .ShowWindow(if visible { co::SW::SHOW } else { co::SW::HIDE });
 }
 
 fn set_text(label: &gui::Label, value: &str) {
