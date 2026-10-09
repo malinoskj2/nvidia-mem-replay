@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::io;
 use thiserror::Error;
 
+#[cfg(windows)]
+use super::shadowplay;
+
 const MAX_REGISTRY_VALUE_BYTES: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -35,8 +38,11 @@ pub(crate) enum NvidiaError {
     RamOriginal,
     #[error("NVIDIA registry access: {0}")]
     Io(#[from] io::Error),
-    #[error("NVIDIA changed its temporary path while this operation was in progress; retry")]
-    Changed,
+    #[error("ShadowPlay still reports {actual} after switching to {expected}; retry")]
+    NotApplied { expected: String, actual: String },
+    #[error("NVIDIA ShadowPlay: {0}")]
+    #[cfg(windows)]
+    Api(#[from] shadowplay::ApiError),
     #[error("this app requires Windows and the NVIDIA overlay")]
     #[cfg(not(windows))]
     Unsupported,
@@ -89,14 +95,25 @@ impl RawValue {
     }
 }
 
+/// Plan the redirection from the location the running `ShadowPlay` engine uses right now.
 pub(crate) fn plan(target: String) -> Result<Redirect, NvidiaError> {
-    let original = read()?;
-    let original_path = original.path()?;
+    let original_path = current_path()?;
     if let (Some(original_drive), Some(target_drive)) = (original_path.get(..2), target.get(..2))
         && original_drive.eq_ignore_ascii_case(target_drive)
     {
         return Err(NvidiaError::RamOriginal);
     }
+
+    // Keep the registry's exact type and bytes while they agree with the live value, so the
+    // registry fallback can restore them verbatim.
+    let original = match read() {
+        Ok(value) if value.path().is_ok_and(|path| path == original_path) => value,
+        _ => RawValue {
+            kind: 3,
+            bytes: Vec::new(),
+        }
+        .with_path(&original_path),
+    };
 
     Ok(Redirect {
         replacement: original.with_path(&target),
@@ -106,22 +123,48 @@ pub(crate) fn plan(target: String) -> Result<Redirect, NvidiaError> {
     })
 }
 
+/// Switch the running engine to the RAM location; the engine persists the value itself.
 pub(crate) fn apply(redirect: &Redirect) -> Result<(), NvidiaError> {
-    if read()? != redirect.original {
-        return Err(NvidiaError::Changed);
-    }
+    set_live_path(&redirect.target)?;
 
-    write(&redirect.replacement)
+    let actual = current_path()?;
+    if actual.eq_ignore_ascii_case(&redirect.target) {
+        Ok(())
+    } else {
+        Err(NvidiaError::NotApplied {
+            expected: redirect.target.clone(),
+            actual,
+        })
+    }
 }
 
 impl Redirect {
+    /// Only this app's own value is restored; a later user or overlay edit takes precedence.
+    fn restores(&self, current: &str) -> bool {
+        current.eq_ignore_ascii_case(&self.target)
+    }
+
     fn restore_value(&self, current: &RawValue) -> Option<&RawValue> {
         (current == &self.replacement).then_some(&self.original)
     }
 }
 
-/// Only restore our own value; a later user/overlay edit takes precedence.
+/// Restore the original location in the running engine, or in the registry it reads at
+/// its next start when the engine cannot be reached.
 pub(crate) fn restore(redirect: &Redirect) -> Result<(), NvidiaError> {
+    match live_path() {
+        Ok(current) => {
+            if redirect.restores(&current) {
+                set_live_path(&redirect.original_path)?;
+            }
+
+            Ok(())
+        }
+        Err(_) => restore_registry(redirect),
+    }
+}
+
+fn restore_registry(redirect: &Redirect) -> Result<(), NvidiaError> {
     match read() {
         Ok(value) => {
             if let Some(original) = redirect.restore_value(&value) {
@@ -133,6 +176,37 @@ pub(crate) fn restore(redirect: &Redirect) -> Result<(), NvidiaError> {
         Err(NvidiaError::Missing) => Ok(()),
         Err(error) => Err(error),
     }
+}
+
+/// The engine's current location, validated like a registry path.
+fn current_path() -> Result<String, NvidiaError> {
+    let path = live_path()?;
+    RawValue {
+        kind: 1,
+        bytes: Vec::new(),
+    }
+    .with_path(&path)
+    .path()
+}
+
+#[cfg(windows)]
+fn live_path() -> Result<String, NvidiaError> {
+    Ok(shadowplay::text(shadowplay::TEMPORARY_PATH)?)
+}
+
+#[cfg(windows)]
+fn set_live_path(path: &str) -> Result<(), NvidiaError> {
+    Ok(shadowplay::set_text(shadowplay::TEMPORARY_PATH, path)?)
+}
+
+#[cfg(not(windows))]
+const fn live_path() -> Result<String, NvidiaError> {
+    Err(NvidiaError::Unsupported)
+}
+
+#[cfg(not(windows))]
+const fn set_live_path(_: &str) -> Result<(), NvidiaError> {
+    Err(NvidiaError::Unsupported)
 }
 
 #[cfg(windows)]

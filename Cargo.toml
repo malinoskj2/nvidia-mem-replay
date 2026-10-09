@@ -27,7 +27,8 @@ strip = "symbols"
 codegen-units = 1
 
 [lints.rust]
-unsafe_code = "forbid"
+# Allowed only in src/sys/shadowplay.rs, the binding to NVIDIA's ShadowPlay API library.
+unsafe_code = "deny"
 unreachable_pub = "warn"
 
 [lints.clippy]

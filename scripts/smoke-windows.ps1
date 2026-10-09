@@ -50,10 +50,7 @@ try {
     if ($baseline.version -ne 1) { throw 'Wrong telemetry version.' }
     if (!(Test-Path -LiteralPath $target -PathType Container)) { throw 'Helper reported readiness without creating its recording directory.' }
 
-    $replacement = if ($kind -eq 'Binary') { ,([Text.Encoding]::Unicode.GetBytes($target + [char]0)) } else { $target }
-    $key.SetValue('TempFilePath', $replacement, $kind)
-    $key.Flush()
-
+    # The live NVIDIA setting is left alone: restoration must then be a no-op.
     $file = "$target\counter.bin"
     $stream = [IO.FileStream]::new($file, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
     try {
@@ -153,17 +150,12 @@ namespace ReplaySmoke {
 
     $restored = $key.GetValue('TempFilePath', $null, 'DoNotExpandEnvironmentNames')
     if ($kind -eq 'Binary') {
-        if ([Convert]::ToBase64String($restored) -ne [Convert]::ToBase64String($original)) { throw 'Original registry bytes were not restored.' }
-    } elseif ($restored -cne $original) { throw 'Original temporary path was not restored.' }
+        if ([Convert]::ToBase64String($restored) -ne [Convert]::ToBase64String($original)) { throw 'A foreign temporary path was modified by restoration.' }
+    } elseif ($restored -cne $original) { throw 'A foreign temporary path was modified by restoration.' }
     if (Test-Path $root) { throw 'RAM volume was not unmounted.' }
-    Write-Host 'PASS: mount, writes, overwrite, deletion, truncate/extend, stream replacement, capacity, owner exit, restoration.'
+    Write-Host 'PASS: mount, writes, overwrite, deletion, truncate/extend, stream replacement, capacity, owner exit, untouched foreign path.'
 } finally {
     if (!$process.HasExited) { $process.Kill(); $process.WaitForExit() }
-
-    # Test cleanup preserves later edits just like the application.
-    $current = $key.GetValue('TempFilePath', $null, 'DoNotExpandEnvironmentNames')
-    $ours = if ($kind -eq 'Binary') { [Text.Encoding]::Unicode.GetString($current).TrimEnd([char]0) -ceq $target } else { $current -ceq $target }
-    if ($ours) { $key.SetValue('TempFilePath', $original, $kind); $key.Flush() }
 
     $key.Dispose()
     $hive.Dispose()

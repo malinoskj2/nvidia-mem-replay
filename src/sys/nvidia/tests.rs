@@ -64,3 +64,26 @@ fn restoration_preserves_user_edits_and_original_binary_bytes() {
     );
     assert_eq!(redirect.restore_value(&original), None);
 }
+
+#[test]
+fn live_restoration_only_replaces_this_apps_own_value() {
+    let redirect = Redirect {
+        original: RawValue {
+            kind: 3,
+            bytes: vec![],
+        }
+        .with_path(r"C:\Temp"),
+        replacement: RawValue {
+            kind: 3,
+            bytes: vec![],
+        }
+        .with_path(r"R:\NVIDIA-Replay"),
+        original_path: r"C:\Temp".to_owned(),
+        target: r"R:\NVIDIA-Replay".to_owned(),
+    };
+
+    assert!(redirect.restores(r"R:\NVIDIA-Replay"));
+    assert!(redirect.restores(r"r:\nvidia-replay"));
+    assert!(!redirect.restores(r"D:\NewTemp"));
+    assert!(!redirect.restores(r"C:\Temp"));
+}

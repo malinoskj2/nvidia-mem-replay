@@ -54,7 +54,7 @@ impl DisplayStatus {
         match self {
             Self::Preparing => "Preparing RAM storage…",
             Self::StartFailed => "Could not start RAM storage",
-            Self::Waiting => "RAM ready · waiting for NVIDIA writes",
+            Self::Waiting => "RAM ready · switch Instant Replay off and on in Alt+Z",
             Self::Writing => "Data is being written to RAM",
             Self::Ready => "RAM ready · no writes in the last 2 seconds",
             Self::Stopping => "Stopping RAM storage…",

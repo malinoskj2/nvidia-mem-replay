@@ -75,13 +75,30 @@ native Windows testing.
 
 ## Discovery and recovery
 
-The version-sensitive setting is `TempFilePath` in the current user's 64-bit
-registry view at `Software\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS`.
-UTF-16 string, expandable string and binary values are supported. Missing or
-unsupported values produce a visible error. Original type and bytes are
-preserved; existing disk directories are not moved or removed.
+The setting is ShadowPlay's `TempFilePath` property. The ShadowPlay engine
+(hosted by `nvcontainer.exe`) reads it from the current user's 64-bit registry
+view at `Software\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS` only when it
+starts; later registry edits are ignored until the engine restarts, and toggling
+Instant Replay does not re-read them. The overlay changes the value at run time
+through NVIDIA's API library `nvspapi64.dll`, which forwards it over NVIDIA's
+message bus to the running engine. The engine applies it immediately and
+persists it, including the derived `HLTempPath`, to the registry.
+`src/sys/shadowplay.rs` uses that same library: `CreateShadowPlayApiInterface`
+with the first-generation interface version and the `TestingTool` client id,
+then the `GetProperty`/`SetProperty` table entries with a COM `VARIANT`
+(`VT_BSTR`). The layout follows the open-source Experienceless client and was
+verified against NVIDIA App 11.0.9; the engine logs every version or client-id
+mismatch to `%ProgramData%\NVIDIA Corporation\ShadowPlay\CaptureCore.log`.
+This is the only module that uses `unsafe` Rust.
 
-A journal is saved before redirection. Stop/quit restores before unmounting.
+Discovery reads the live value from the engine, so the NVIDIA App must be
+running. The registry is read only to preserve the original value type and
+bytes for the journal. Instant Replay opens its temporary files when it starts,
+so the user still switches it off and on after the redirection.
+
+A journal is saved before redirection. Stop/quit restores through the engine
+before unmounting; when the engine cannot be reached, the registry value it
+reads at its next start is restored instead.
 The GUI sends its exact recovery snapshot to the Rust supervisor before
 readiness. The supervisor restores it on GUI control-pipe EOF, including GUI
 crashes. Its own exit closes the native
@@ -122,7 +139,8 @@ python3 tests/native/run.py
 
 Portable lifecycle, storage, telemetry and registry representation tests run on
 Linux without a driver or display. Windows adapters and GUI are target restricted.
-Application code forbids unsafe Rust; native C++ uses WinFsp's API.
+Unsafe Rust is confined to `src/sys/shadowplay.rs`, the binding to NVIDIA's
+ShadowPlay API library; native C++ uses WinFsp's API.
 The native harness exercises production methods with platform stubs, including
 allocation-failure injection and rename rollback; it does not replace driver
 integration testing.
@@ -130,7 +148,9 @@ integration testing.
 With Instant Replay off on a Windows NVIDIA machine, run
 `./scripts/smoke-windows.ps1` after installation. It checks mount, overwrite
 accounting, deletion, truncate/extend clearing, alternate-stream replacement,
-capacity failure, owner EOF restoration and unmount.
+capacity failure, owner EOF handling and unmount. The supervisor's restoration
+leaves a location that is not its own untouched, so the script verifies that
+the live NVIDIA setting is unchanged rather than redirecting it.
 Installation, filesystem behavior, tray controls and recovery can also be tested
 in a Windows VM with a synthetic `TempFilePath` setting. The GUI requires OpenGL
 2.0+, so a VM with only a basic display adapter needs a software renderer for

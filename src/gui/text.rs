@@ -27,7 +27,7 @@ pub(super) const LOW_MEMORY_WARNING: &str =
     "System memory is low. Reduce replay length or bitrate.";
 pub(super) const BUFFER_LIMIT_WARNING: &str =
     "Near the memory ceiling. Recording may stop if the buffer fills.";
-pub(super) const RECORDING_HELP: &str = "If writes do not start, toggle Instant Replay off/on in Alt+Z. Keep Gallery on a persistent drive.";
+pub(super) const RECORDING_HELP: &str = "NVIDIA uses the RAM location from the next time Instant Replay is switched on: toggle it off/on in Alt+Z. Keep Gallery on a persistent drive.";
 pub(super) const STARTUP_FAILED_TITLE: &str = "nvidia-mem-replay could not start";
 pub(super) const STARTUP_FAILED_HELP: &str =
     "Close this window, resolve the error, then launch again.";
