@@ -3,7 +3,7 @@
 
 use crate::{
     APP_NAME,
-    config::{Config, MAX_DRIVE, MAX_MEMORY_LIMIT_MB, MIN_DRIVE, MIN_MEMORY_LIMIT_MB},
+    config::{Config, MAX_DRIVE, MAX_MEMORY_LIMIT_MB, MIN_DRIVE, MIN_MEMORY_LIMIT_MB, Placement},
     service::{Shutdown, Status, Worker},
     sys::{
         startup,
@@ -23,9 +23,9 @@ const STATUS_INTERVAL_MS: u32 = 250;
 const ICON_RESOURCE: u16 = 1;
 
 const WINDOW_WIDTH: i32 = 470;
-const WINDOW_HEIGHT: i32 = 374;
+const WINDOW_HEIGHT: i32 = 396;
 const MARGIN: i32 = 8;
-const TAB_HEIGHT: i32 = 324;
+const TAB_HEIGHT: i32 = 346;
 const PAGE_WIDTH: i32 = WINDOW_WIDTH - 2 * MARGIN - 8;
 const GROUP_X: i32 = 8;
 const GROUP_WIDTH: i32 = PAGE_WIDTH - 2 * GROUP_X;
@@ -99,6 +99,7 @@ struct StatusPage {
 struct SettingsPage {
     page: gui::TabPage,
     frames: Vec<Frame>,
+    show_drive: gui::CheckBox,
     drive: gui::ComboBox,
     ceiling: gui::Edit,
     _ceiling_spin: gui::UpDown,
@@ -172,6 +173,20 @@ fn label(
     )
 }
 
+/// A single-line label that shortens a long path in the middle instead of clipping it.
+fn path_label(parent: &(impl GuiParent + 'static), x: i32, y: i32, width: i32) -> gui::Label {
+    gui::Label::new(
+        parent,
+        gui::LabelOpts {
+            text: "",
+            position: gui::dpi(x, y),
+            size: gui::dpi(width, LINE),
+            control_style: co::SS::LEFT | co::SS::PATHELLIPSIS,
+            ..Default::default()
+        },
+    )
+}
+
 fn button(
     parent: &(impl GuiParent + 'static),
     text: &str,
@@ -227,7 +242,7 @@ impl StatusPage {
             VALUE_X - INNER_X,
             1,
         );
-        let original = label(&page, "", VALUE_X, 180, VALUE_WIDTH, 1);
+        let original = path_label(&page, VALUE_X, 180, VALUE_WIDTH);
         let _ram_caption = label(
             &page,
             text::RAM_LOCATION,
@@ -236,7 +251,7 @@ impl StatusPage {
             VALUE_X - INNER_X,
             1,
         );
-        let ram = label(&page, "", VALUE_X, 200, VALUE_WIDTH, 1);
+        let ram = path_label(&page, VALUE_X, 200, VALUE_WIDTH);
         let _ceiling_caption = label(
             &page,
             text::BUFFER_CEILING,
@@ -269,38 +284,114 @@ impl StatusPage {
     }
 }
 
+/// The controls of the "RAM storage" group.
+struct StorageControls {
+    group: Frame,
+    show_drive: gui::CheckBox,
+    drive: gui::ComboBox,
+    ceiling: gui::Edit,
+    ceiling_spin: gui::UpDown,
+    apply: gui::Button,
+    settings_error: gui::Label,
+}
+
 impl SettingsPage {
     fn new(parent: &(impl GuiParent + 'static), config: &Config, start_with_windows: bool) -> Self {
         let page = gui::TabPage::new(parent, gui::TabPageOpts::default());
+        let storage = Self::storage_controls(&page, config);
 
-        let storage_group = frame(&page, text::GROUP_STORAGE, 6, 106);
-        let _drive_caption = label(&page, text::DRIVE, INNER_X, 30, 40, 1);
+        let startup_group = frame(&page, text::GROUP_STARTUP, 142, 78);
+        let start_with_windows = gui::CheckBox::new(
+            &page,
+            gui::CheckBoxOpts {
+                text: text::START_WITH_WINDOWS,
+                position: gui::dpi(INNER_X, 162),
+                check_state: if start_with_windows {
+                    co::BST::CHECKED
+                } else {
+                    co::BST::UNCHECKED
+                },
+                ..Default::default()
+            },
+        );
+        let _startup_help = label(
+            &page,
+            text::START_WITH_WINDOWS_HELP,
+            INNER_X,
+            182,
+            INNER_WIDTH,
+            2,
+        );
+        let startup_error = label(&page, "", INNER_X, 182 + 2 * LINE, INNER_WIDTH, 1);
+
+        let recording_group = frame(&page, text::GROUP_RECORDING, 228, 90);
+        let recording_help = label(&page, "", INNER_X, 248, INNER_WIDTH, 2);
+        let recording = button(&page, text::STOP_AND_RESTORE, INNER_X, 286, 120);
+
+        let frames = vec![storage.group, startup_group, recording_group];
+        let (paint_page, paint_frames_list) = (page.clone(), frames.clone());
+        page.on().wm_paint(move || {
+            paint_frames(paint_page.hwnd(), &paint_frames_list);
+            Ok(())
+        });
+
+        Self {
+            page,
+            frames,
+            show_drive: storage.show_drive,
+            drive: storage.drive,
+            ceiling: storage.ceiling,
+            _ceiling_spin: storage.ceiling_spin,
+            apply: storage.apply,
+            settings_error: storage.settings_error,
+            start_with_windows,
+            startup_error,
+            recording_help,
+            recording,
+        }
+    }
+
+    fn storage_controls(page: &gui::TabPage, config: &Config) -> StorageControls {
+        let group = frame(page, text::GROUP_STORAGE, 6, 128);
+        let show_drive = gui::CheckBox::new(
+            page,
+            gui::CheckBoxOpts {
+                text: text::SHOW_AS_DRIVE,
+                position: gui::dpi(INNER_X, 29),
+                check_state: if config.placement == Placement::Drive {
+                    co::BST::CHECKED
+                } else {
+                    co::BST::UNCHECKED
+                },
+                ..Default::default()
+            },
+        );
         let drive_names: Vec<String> = (MIN_DRIVE..=MAX_DRIVE).map(text::drive).collect();
         let drive_items: Vec<&str> = drive_names.iter().map(String::as_str).collect();
         let drive = gui::ComboBox::new(
-            &page,
+            page,
             gui::ComboBoxOpts {
-                position: gui::dpi(INNER_X + 44, 26),
+                position: gui::dpi(INNER_X + 216, 26),
                 width: gui::dpi_x(64),
                 items: &drive_items,
                 selected_item: Some(u32::from(config.drive as u8 - MIN_DRIVE as u8)),
                 ..Default::default()
             },
         );
-        let _ceiling_caption = label(&page, text::MEMORY_CEILING, INNER_X + 128, 30, 76, 1);
+        let _ceiling_caption = label(page, text::MEMORY_CEILING, INNER_X, 56, 76, 1);
         let ceiling_text = config.memory_limit_mb.to_string();
         let ceiling = gui::Edit::new(
-            &page,
+            page,
             gui::EditOpts {
                 text: &ceiling_text,
-                position: gui::dpi(INNER_X + 206, 26),
+                position: gui::dpi(INNER_X + 80, 52),
                 width: gui::dpi_x(76),
                 control_style: co::ES::NUMBER | co::ES::AUTOHSCROLL | co::ES::NOHIDESEL,
                 ..Default::default()
             },
         );
         let ceiling_spin = gui::UpDown::new(
-            &page,
+            page,
             gui::UpDownOpts {
                 range: (
                     i32::try_from(MIN_MEMORY_LIMIT_MB).unwrap_or(i32::MAX),
@@ -317,57 +408,18 @@ impl SettingsPage {
                 ..Default::default()
             },
         );
-        let _restart_notice = label(&page, text::RESTART_NOTICE, INNER_X, 54, INNER_WIDTH, 1);
-        let apply = button(&page, text::APPLY_AND_RESTART, INNER_X, 76, 120);
-        let settings_error = label(&page, "", INNER_X + 128, 80, INNER_WIDTH - 128, 1);
+        let _restart_notice = label(page, text::RESTART_NOTICE, INNER_X, 80, INNER_WIDTH, 1);
+        let apply = button(page, text::APPLY_AND_RESTART, INNER_X, 100, 120);
+        let settings_error = label(page, "", INNER_X + 128, 104, INNER_WIDTH - 128, 1);
 
-        let startup_group = frame(&page, text::GROUP_STARTUP, 120, 78);
-        let start_with_windows = gui::CheckBox::new(
-            &page,
-            gui::CheckBoxOpts {
-                text: text::START_WITH_WINDOWS,
-                position: gui::dpi(INNER_X, 140),
-                check_state: if start_with_windows {
-                    co::BST::CHECKED
-                } else {
-                    co::BST::UNCHECKED
-                },
-                ..Default::default()
-            },
-        );
-        let _startup_help = label(
-            &page,
-            text::START_WITH_WINDOWS_HELP,
-            INNER_X,
-            160,
-            INNER_WIDTH,
-            2,
-        );
-        let startup_error = label(&page, "", INNER_X, 160 + 2 * LINE, INNER_WIDTH, 1);
-
-        let recording_group = frame(&page, text::GROUP_RECORDING, 206, 90);
-        let recording_help = label(&page, "", INNER_X, 226, INNER_WIDTH, 2);
-        let recording = button(&page, text::STOP_AND_RESTORE, INNER_X, 264, 120);
-
-        let frames = vec![storage_group, startup_group, recording_group];
-        let (paint_page, paint_frames_list) = (page.clone(), frames.clone());
-        page.on().wm_paint(move || {
-            paint_frames(paint_page.hwnd(), &paint_frames_list);
-            Ok(())
-        });
-
-        Self {
-            page,
-            frames,
+        StorageControls {
+            group,
+            show_drive,
             drive,
             ceiling,
-            _ceiling_spin: ceiling_spin,
+            ceiling_spin,
             apply,
             settings_error,
-            start_with_windows,
-            startup_error,
-            recording_help,
-            recording,
         }
     }
 
@@ -388,11 +440,21 @@ impl SettingsPage {
             .ok_or_else(|| text::CEILING_REQUIRED.to_owned())?;
 
         let config = Config {
+            placement: if self.show_drive.is_checked() {
+                Placement::Drive
+            } else {
+                Placement::Hidden
+            },
             drive,
             memory_limit_mb,
         };
         config.validate().map_err(|error| error.to_string())?;
         Ok(config)
+    }
+
+    /// The drive letter only matters while the volume is shown as a drive.
+    fn sync_drive_choice(&self) {
+        self.drive.hwnd().EnableWindow(self.show_drive.is_checked());
     }
 }
 
@@ -544,6 +606,12 @@ impl Main {
         });
 
         let me = self.clone();
+        self.settings.show_drive.on().bn_clicked(move || {
+            me.settings.sync_drive_choice();
+            Ok(())
+        });
+
+        let me = self.clone();
         self.settings.recording.on().bn_clicked(move || {
             me.toggle_recording();
             Ok(())
@@ -577,6 +645,7 @@ impl Main {
         window::match_dialog_title_bar(self.wnd.hwnd());
         fit_titles(&self.status.frames);
         fit_titles(&self.settings.frames);
+        self.settings.sync_drive_choice();
         let _ = self
             .wnd
             .hwnd()

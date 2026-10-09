@@ -20,10 +20,17 @@ not configured. The app reads that setting each launch. Keep **Gallery** on an
 SSD or another persistent drive. Toggle Instant Replay off/on if NVIDIA needs
 to reload its cached settings.
 
-The default ceiling is 8192 decimal MB. Settings selects the ceiling and an unused
-drive letter. **Apply and restart** discards RAM contents: save a wanted replay
-first. Existing drive/ceiling configuration and lifetime counters are retained.
+The default ceiling is 8192 decimal MB. Settings selects the ceiling and the
+placement: hidden (the default) mounts the volume at the directory
+`%LOCALAPPDATA%\NvidiaMemReplay\ram` as a WinFsp directory mount point, so it
+has no drive letter and is absent from Explorer, This PC, file dialogs and Disk
+Management; **Show as a drive letter in Explorer** mounts it at an unused letter
+instead. **Apply and restart** discards RAM contents: save a wanted replay
+first. Existing placement/drive/ceiling configuration and lifetime counters are
+retained; a configuration saved before placements existed becomes hidden.
 An old custom helper path is ignored; the matching bundled helper is always used.
+WinFsp removes the mount-point directory on unmount; one left behind by a killed
+helper is a dangling reparse point, which the next start removes before mounting.
 
 Closing keeps recording active. Left-click the tray icon to reopen. The menu
 provides Show, Stop and restore, and Quit. Stop and Quit restore NVIDIA's original
@@ -193,7 +200,8 @@ allocation-failure injection and rename rollback; it does not replace driver
 integration testing.
 
 With Instant Replay off on a Windows NVIDIA machine, run
-`./scripts/smoke-windows.ps1` after installation. It checks mount, overwrite
+`./scripts/smoke-windows.ps1` after installation (`-Directory <path>` exercises a
+directory mount point instead of the drive letter). It checks mount, overwrite
 accounting, deletion, truncate/extend clearing, alternate-stream replacement,
 capacity failure, owner EOF handling and unmount. The supervisor's restoration
 leaves a location that is not its own untouched, so the script verifies that

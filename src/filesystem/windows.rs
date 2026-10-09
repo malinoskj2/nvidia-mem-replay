@@ -1,12 +1,12 @@
 use crate::{
-    config::{Config, MAX_DRIVE, MAX_MEMORY_LIMIT_MB, MIN_DRIVE, MIN_MEMORY_LIMIT_MB},
+    config::{MAX_DRIVE, MAX_MEMORY_LIMIT_MB, MIN_DRIVE, MIN_MEMORY_LIMIT_MB, Volume},
     sys::{helper::Helper, icon, nvidia, startup},
 };
 use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
 use std::{
     io::{self, BufRead, Read, Write},
-    path::PathBuf,
+    path::{Component, Path, PathBuf, Prefix},
     sync::mpsc,
     thread,
     time::Duration,
@@ -30,8 +30,9 @@ enum Mode {
     /// Internal owned filesystem process; keep its stdin open until shutdown.
     #[command(hide = true)]
     Filesystem {
-        #[arg(long, value_parser = drive)]
-        drive: char,
+        /// `X:` for a drive letter, or the absolute directory to mount the volume at.
+        #[arg(long, value_parser = mount_point)]
+        mount: String,
         #[arg(long, value_parser = clap::value_parser!(u32).range(i64::from(MIN_MEMORY_LIMIT_MB)..=i64::from(MAX_MEMORY_LIMIT_MB)))]
         memory_limit_mb: u32,
     },
@@ -48,11 +49,30 @@ pub(crate) enum Launch {
     Window { tray: bool },
 }
 
-fn drive(value: &str) -> Result<char, String> {
+/// A drive letter `D:`..`Z:`, or an absolute directory path without `.`/`..` steps or a
+/// trailing separator (the helper checks the same).
+fn mount_point(value: &str) -> Result<String, String> {
     let mut chars = value.chars();
-    match (chars.next(), chars.next()) {
-        (Some(letter), None) if (MIN_DRIVE..=MAX_DRIVE).contains(&letter) => Ok(letter),
-        _ => Err("drive must be one letter D through Z".to_owned()),
+    let letter = matches!(
+        (chars.next(), chars.next(), chars.next()),
+        (Some(letter), Some(':'), None) if (MIN_DRIVE..=MAX_DRIVE).contains(&letter)
+    );
+    // A directory on a drive (`C:\...`), never a UNC or device path.
+    let path = Path::new(value);
+    let mut steps = path.components();
+    let on_disk = matches!(
+        steps.next(),
+        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
+    );
+    let directory = on_disk
+        && path.has_root()
+        && !value.ends_with(['\\', '/'])
+        && steps.all(|step| matches!(step, Component::RootDir | Component::Normal(_)));
+
+    if letter || directory {
+        Ok(value.to_owned())
+    } else {
+        Err("mount point must be a drive letter D: through Z: or an absolute directory".to_owned())
     }
 }
 
@@ -60,13 +80,10 @@ pub(super) fn dispatch() -> Result<Launch> {
     let cli = Cli::try_parse()?;
     match cli.command {
         Some(Mode::Filesystem {
-            drive,
+            mount,
             memory_limit_mb,
         }) => {
-            run(&Config {
-                drive,
-                memory_limit_mb,
-            })?;
+            run(&Volume::new(mount, memory_limit_mb))?;
             Ok(Launch::Handled)
         }
         Some(Mode::Icon { path }) => {
@@ -80,11 +97,11 @@ pub(super) fn dispatch() -> Result<Launch> {
     }
 }
 
-fn run(config: &Config) -> Result<()> {
+fn run(volume: &Volume) -> Result<()> {
     // The GUI already holds the application's bus identity; a duplicate would be dropped.
     crate::sys::shadowplay::set_role(crate::sys::shadowplay::Role::Supervisor);
-    let redirect = super::read_redirect(&mut io::stdin().lock(), config)?;
-    let mut filesystem = Helper::start_memefs(config).context("start bundled MemFS Extended")?;
+    let redirect = super::read_redirect(&mut io::stdin().lock(), &volume.target())?;
+    let mut filesystem = Helper::start_memefs(volume).context("start bundled MemFS Extended")?;
 
     let (stop, receiver) = mpsc::sync_channel(1);
     let reader = thread::spawn(move || {

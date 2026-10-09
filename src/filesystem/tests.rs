@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::Config;
 use crate::sys::nvidia::RawValue;
 use crate::{sys::helper::HelperError, telemetry::Sample};
 use std::io::Cursor;
@@ -26,7 +27,7 @@ fn snapshot_is_preserved_and_leaves_stop_command_unread() {
     bytes.extend_from_slice(b"\nstop\n");
     let mut input = Cursor::new(bytes);
 
-    let actual = read_redirect(&mut input, &config).unwrap();
+    let actual = read_redirect(&mut input, &config.target()).unwrap();
 
     assert_eq!(actual.original, expected.original);
     assert_eq!(actual.replacement, expected.replacement);
@@ -42,20 +43,25 @@ fn rejects_incomplete_oversized_and_mismatched_snapshots() {
     let mut snapshot = redirect(&config);
     let bytes = serde_json::to_vec(&snapshot).unwrap();
 
-    assert!(read_redirect(&mut Cursor::new(bytes), &config).is_err());
+    let target = config.target();
+    assert!(read_redirect(&mut Cursor::new(bytes), &target).is_err());
     assert!(
         read_redirect(
             &mut Cursor::new(vec![b'x'; MAX_RECOVERY_SNAPSHOT_BYTES + 1]),
-            &config
+            &target
         )
         .is_err()
     );
+
+    let mut other_volume = serde_json::to_vec(&snapshot).unwrap();
+    other_volume.push(b'\n');
+    assert!(read_redirect(&mut Cursor::new(other_volume), r"T:\Other").is_err());
 
     snapshot.replacement = snapshot.original.with_path(r"T:\Wrong");
     let mut bytes = serde_json::to_vec(&snapshot).unwrap();
     bytes.push(b'\n');
 
-    assert!(read_redirect(&mut Cursor::new(bytes), &config).is_err());
+    assert!(read_redirect(&mut Cursor::new(bytes), &target).is_err());
 }
 
 #[test]

@@ -1,7 +1,4 @@
-use crate::{
-    config::Config,
-    sys::{helper::ShutdownReport, nvidia::Redirect},
-};
+use crate::sys::{helper::ShutdownReport, nvidia::Redirect};
 use anyhow::{Context as _, Result};
 use std::io::{BufRead, Read, Write};
 
@@ -19,7 +16,8 @@ pub(crate) fn dispatch() -> anyhow::Result<Launch> {
     windows::dispatch()
 }
 
-pub(super) fn read_redirect(reader: &mut impl BufRead, config: &Config) -> Result<Redirect> {
+/// Reads the GUI's recovery snapshot, which must redirect NVIDIA to this volume's `target`.
+pub(super) fn read_redirect(reader: &mut impl BufRead, target: &str) -> Result<Redirect> {
     let mut bytes = Vec::new();
     reader
         .take((MAX_RECOVERY_SNAPSHOT_BYTES + 1) as u64)
@@ -31,7 +29,7 @@ pub(super) fn read_redirect(reader: &mut impl BufRead, config: &Config) -> Resul
 
     let redirect: Redirect = serde_json::from_slice(&bytes).context("decode recovery snapshot")?;
     anyhow::ensure!(
-        redirect.target == config.target()
+        redirect.target == target
             && redirect.original.path()? == redirect.original_path
             && redirect.original.with_path(&redirect.target) == redirect.replacement,
         "recovery snapshot does not match configuration"

@@ -1,11 +1,18 @@
-# Run with NVIDIA Instant Replay off. Uses only an unused drive letter.
-param([char]$Drive = 'T')
+# Run with NVIDIA Instant Replay off. Uses an unused drive letter, or a directory mount point
+# (the hidden placement the app uses by default) when -Directory is given.
+param([char]$Drive = 'T', [string]$Directory = '')
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot -Parent)
-if ($Drive -cnotmatch '^[D-Z]$') { throw 'Use an unused letter from D through Z.' }
-$mount = "${Drive}:"
-$root = "${Drive}:\"
-if (Test-Path $root) { throw "$mount is already in use." }
+if ($Directory) {
+    if (Test-Path -LiteralPath $Directory) { throw "$Directory already exists; the mount point must not." }
+    $mount = $Directory
+    $root = "$Directory\"
+} else {
+    if ($Drive -cnotmatch '^[D-Z]$') { throw 'Use an unused letter from D through Z.' }
+    $mount = "${Drive}:"
+    $root = "${Drive}:\"
+    if (Test-Path $root) { throw "$mount is already in use." }
+}
 
 $keyPath = 'Software\NVIDIA Corporation\Global\ShadowPlay\NVSPCAPS'
 $hive = [Microsoft.Win32.RegistryKey]::OpenBaseKey('CurrentUser', 'Registry64')
@@ -14,11 +21,11 @@ if (!$key) { throw 'Configure NVIDIA overlay temporary files first.' }
 $original = $key.GetValue('TempFilePath', $null, 'DoNotExpandEnvironmentNames')
 if ($null -eq $original) { throw 'NVIDIA TempFilePath is absent.' }
 $kind = $key.GetValueKind('TempFilePath')
-$target = "${Drive}:\NVIDIA-Replay"
+$target = "$mount\NVIDIA-Replay"
 
 $info = [System.Diagnostics.ProcessStartInfo]::new()
 $info.FileName = "$PWD\dist\nvidia-mem-replay.exe"
-$info.Arguments = "filesystem --drive $Drive --memory-limit-mb 256"
+$info.Arguments = "filesystem --mount `"$mount`" --memory-limit-mb 256"
 $info.UseShellExecute = $false
 $info.CreateNoWindow = $true
 $info.RedirectStandardInput = $true
@@ -152,7 +159,8 @@ namespace ReplaySmoke {
     if ($kind -eq 'Binary') {
         if ([Convert]::ToBase64String($restored) -ne [Convert]::ToBase64String($original)) { throw 'A foreign temporary path was modified by restoration.' }
     } elseif ($restored -cne $original) { throw 'A foreign temporary path was modified by restoration.' }
-    if (Test-Path $root) { throw 'RAM volume was not unmounted.' }
+    if (Test-Path -LiteralPath $root) { throw 'RAM volume was not unmounted.' }
+    if ($Directory -and (Test-Path -LiteralPath $Directory)) { throw 'Directory mount point was not removed on unmount.' }
     Write-Host 'PASS: mount, writes, overwrite, deletion, truncate/extend, stream replacement, capacity, owner exit, untouched foreign path.'
 } finally {
     if (!$process.HasExited) { $process.Kill(); $process.WaitForExit() }

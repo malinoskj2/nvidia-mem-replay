@@ -5,6 +5,7 @@
 #include <psapi.h>
 #include <cstdio>
 #include <cerrno>
+#include <cwctype>
 
 static DWORD WINAPI WaitForOwner(void*) {
     char command[512];
@@ -41,10 +42,29 @@ static bool Report(Memfs::MemFs& filesystem) {
         WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), line, length, &written, nullptr) && written == static_cast<DWORD>(length);
 }
 
+// A drive letter D: through Z:, or an absolute directory on a drive (X:\dir\...) with no
+// trailing separator and no "." or ".." steps. WinFsp creates the directory as a mount point,
+// so it must not exist yet; the supervisor checks that before starting this process.
+static bool IsMountPoint(const wchar_t* mount) {
+    const size_t length = wcslen(mount);
+    if (length == 2) return mount[0] >= L'D' && mount[0] <= L'Z' && mount[1] == L':';
+    if (length < 4 || length > 4096 || !iswalpha(mount[0]) || mount[1] != L':' || mount[2] != L'\\' ||
+        mount[length - 1] == L'\\' || wcschr(mount, L'/')) return false;
+
+    for (size_t start = 3; start < length;) {
+        size_t end = start;
+        while (end < length && mount[end] != L'\\') ++end;
+        const size_t step = end - start;
+        if (step == 0 || (mount[start] == L'.' && (step == 1 || (step == 2 && mount[start + 1] == L'.'))))
+            return false;
+        start = end + 1;
+    }
+    return true;
+}
+
 int wmain(int argc, wchar_t** argv) {
     // Only the bundled Rust supervisor calls this adapter. Reject ambiguous input.
-    if (argc != 5 || wcscmp(argv[1], L"-m") || wcscmp(argv[3], L"-s") ||
-        wcslen(argv[2]) != 2 || argv[2][0] < L'D' || argv[2][0] > L'Z' || argv[2][1] != L':' ||
+    if (argc != 5 || wcscmp(argv[1], L"-m") || wcscmp(argv[3], L"-s") || !IsMountPoint(argv[2]) ||
         argv[4][0] < L'0' || argv[4][0] > L'9') return 2;
 
     wchar_t* end;

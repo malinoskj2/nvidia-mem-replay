@@ -7,7 +7,7 @@ namespace Memfs {
 	public:
 		explicit CreateException(const NTSTATUS status);
 
-		[[nodiscard]] char const* what() const override;
+		[[nodiscard]] char const* what() const noexcept override;
 		[[nodiscard]] NTSTATUS Which() const;
 
 	private:
@@ -15,6 +15,6 @@ namespace Memfs {
 	};
 
 	class FileNameTooLongException final : public std::exception {
-		[[nodiscard]] char const* what() const override;
+		[[nodiscard]] char const* what() const noexcept override;
 	};
 }

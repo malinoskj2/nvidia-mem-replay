@@ -37,13 +37,21 @@ pub(crate) struct Store {
     lock: File,
 }
 
+/// The application state directory (`%LOCALAPPDATA%\NvidiaMemReplay`), which also hosts the
+/// hidden RAM mount point. Without `LOCALAPPDATA` the temporary directory stands in, so paths
+/// can still be formed; [`Store::open`] reports the missing variable as an error instead.
+pub(crate) fn state_directory() -> PathBuf {
+    std::env::var_os(STATE_DIRECTORY_ENV)
+        .map_or_else(std::env::temp_dir, PathBuf::from)
+        .join(STATE_DIRECTORY)
+}
+
 impl Store {
     pub(crate) fn open() -> Result<Self, StorageError> {
-        let root = std::env::var_os(STATE_DIRECTORY_ENV)
-            .map(PathBuf::from)
-            .ok_or(StorageError::NoDirectory)?
-            .join(STATE_DIRECTORY);
-        Self::at(root)
+        if std::env::var_os(STATE_DIRECTORY_ENV).is_none() {
+            return Err(StorageError::NoDirectory);
+        }
+        Self::at(state_directory())
     }
 
     pub(crate) fn at(root: PathBuf) -> Result<Self, StorageError> {

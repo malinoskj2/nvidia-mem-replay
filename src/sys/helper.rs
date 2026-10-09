@@ -1,5 +1,5 @@
 use crate::{
-    config::Config,
+    config::{Config, Volume},
     filesystem::MAX_RECOVERY_SNAPSHOT_BYTES,
     sys::nvidia::Redirect,
     telemetry::{
@@ -31,7 +31,7 @@ const STOP_COMMAND: &[u8] = b"stop\n";
 pub(crate) enum HelperError {
     #[error("RAM filesystem helper I/O: {0}")]
     Io(#[from] io::Error),
-    #[error("drive {0} is already in use; choose another drive letter")]
+    #[error("RAM storage location {0} is already in use; choose another drive letter or placement")]
     Occupied(String),
     #[error("RAM filesystem did not become ready within 15 seconds")]
     Timeout,
@@ -84,18 +84,42 @@ pub(crate) struct Helper {
     shutdown_timeout: Duration,
 }
 
+/// Fails when something already occupies the mount point. A mount-point directory left behind
+/// by a helper that died (`WinFsp` normally removes it on unmount) is a dangling reparse point
+/// that cannot be listed; it is removed so the volume can be mounted there again.
+fn ensure_mount_point_free(mount: &str) -> Result<(), HelperError> {
+    let is_drive = mount.len() == 2;
+    let probe = if is_drive {
+        format!("{mount}\\")
+    } else {
+        mount.to_owned()
+    };
+    match std::fs::symlink_metadata(&probe) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(metadata)
+            if !is_drive
+                && metadata.file_type().is_symlink()
+                && std::fs::read_dir(&probe).is_err() =>
+        {
+            std::fs::remove_dir(&probe)?;
+            Ok(())
+        }
+        Ok(_) => Err(HelperError::Occupied(mount.to_owned())),
+    }
+}
+
 impl Helper {
     pub(crate) fn start(config: &Config, redirect: &Redirect) -> Result<Self, HelperError> {
-        if std::path::Path::new(&format!("{}\\", config.mount())).try_exists()? {
-            return Err(HelperError::Occupied(config.mount()));
-        }
+        let volume = config.volume();
+        ensure_mount_point_free(&volume.mount)?;
 
         let mut command = Command::new(std::env::current_exe()?);
         command
             .args([
                 "filesystem",
-                "--drive",
-                &config.drive.to_string(),
+                "--mount",
+                &volume.mount,
                 "--memory-limit-mb",
                 &config.memory_limit_mb.to_string(),
             ])
@@ -108,32 +132,27 @@ impl Helper {
             command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
 
-        Self::wait_ready(command, config, Some(redirect))
+        Self::wait_ready(command, &volume, Some(redirect))
     }
 
     #[cfg(windows)]
-    pub(crate) fn start_memefs(config: &Config) -> Result<Self, HelperError> {
+    pub(crate) fn start_memefs(volume: &Volume) -> Result<Self, HelperError> {
         use std::os::windows::process::CommandExt;
         let executable = std::env::current_exe()?.with_file_name(MEMEFS_EXECUTABLE);
         let mut command = Command::new(executable);
         command
-            .args([
-                "-m",
-                &config.mount(),
-                "-s",
-                &config.limit_bytes().to_string(),
-            ])
+            .args(["-m", &volume.mount, "-s", &volume.limit_bytes.to_string()])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .creation_flags(0x0800_0000);
 
-        Self::wait_ready(command, config, None)
+        Self::wait_ready(command, volume, None)
     }
 
     fn wait_ready(
         mut command: Command,
-        config: &Config,
+        volume: &Volume,
         redirect: Option<&Redirect>,
     ) -> Result<Self, HelperError> {
         let snapshot = redirect.map(serde_json::to_vec).transpose()?;
@@ -145,7 +164,7 @@ impl Helper {
         }
 
         let mut helper = Self::from_child(command.spawn()?)?;
-        if let Err(error) = helper.await_ready(config, snapshot.as_deref()) {
+        if let Err(error) = helper.await_ready(&volume.target(), snapshot.as_deref()) {
             let _ = helper.stop();
             return Err(helper.diagnostics.attach(error));
         }
@@ -153,7 +172,7 @@ impl Helper {
         Ok(helper)
     }
 
-    fn await_ready(&mut self, config: &Config, snapshot: Option<&[u8]>) -> Result<(), HelperError> {
+    fn await_ready(&mut self, target: &str, snapshot: Option<&[u8]>) -> Result<(), HelperError> {
         if let Some(snapshot) = snapshot {
             // The first telemetry frame acknowledges receipt of this exact snapshot.
             self.shutdown_timeout = RECOVERY_SHUTDOWN_TIMEOUT;
@@ -168,7 +187,7 @@ impl Helper {
         let deadline = Instant::now() + READY_TIMEOUT;
         loop {
             if self.sample()?.is_some() {
-                std::fs::create_dir_all(config.target())?;
+                std::fs::create_dir_all(target)?;
                 return Ok(());
             }
             if Instant::now() >= deadline {

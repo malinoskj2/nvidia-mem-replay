@@ -5,7 +5,7 @@ namespace Memfs {
 	CreateException::CreateException(const NTSTATUS status) : status(status) {
 	}
 
-	char const* CreateException::what() const {
+	char const* CreateException::what() const noexcept {
 		return (std::string("Create Exception with NTStatus: ") + std::to_string(this->status)).c_str();
 	}
 
@@ -13,7 +13,7 @@ namespace Memfs {
 		return this->status;
 	}
 
-	char const* FileNameTooLongException::what() const {
+	char const* FileNameTooLongException::what() const noexcept {
 		return "The file name is too long.";
 	}
 }
