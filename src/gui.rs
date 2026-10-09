@@ -77,6 +77,7 @@ impl App {
             if let Some(sample) = &status.sample {
                 show_memory_status(ui, sample, limit);
             }
+            show_notices(ui, status);
         });
 
         theme::group_box(ui, text::GROUP_LOCATIONS, |ui| {
@@ -94,11 +95,6 @@ impl App {
                     ui.label(theme::value(&text::buffer_ceiling(limit)));
                     ui.end_row();
                 });
-        });
-
-        theme::group_box(ui, text::GROUP_INSTANT_REPLAY, |ui| {
-            ui.label(text::RECORDING_HELP);
-            show_notices(ui, status);
         });
     }
 

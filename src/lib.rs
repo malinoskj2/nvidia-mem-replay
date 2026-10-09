@@ -38,8 +38,8 @@ pub fn run() -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(APP_NAME)
-            .with_inner_size([460.0, 390.0])
-            .with_min_inner_size([420.0, 360.0]),
+            .with_inner_size([460.0, 320.0])
+            .with_min_inner_size([420.0, 300.0]),
         ..Default::default()
     };
 

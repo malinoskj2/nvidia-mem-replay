@@ -16,7 +16,6 @@ pub(super) const MEMORY_CEILING: &str = "Ceiling (MB)";
 
 pub(super) const GROUP_STATUS: &str = "Status";
 pub(super) const GROUP_LOCATIONS: &str = "Temporary files";
-pub(super) const GROUP_INSTANT_REPLAY: &str = "Instant Replay";
 pub(super) const GROUP_STORAGE: &str = "RAM storage";
 pub(super) const ORIGINAL_LOCATION: &str = "NVIDIA location";
 pub(super) const RAM_LOCATION: &str = "RAM location";
@@ -34,7 +33,6 @@ pub(super) const LOW_MEMORY_WARNING: &str =
     "System memory is low. Reduce replay length or bitrate.";
 pub(super) const BUFFER_LIMIT_WARNING: &str =
     "Near the memory ceiling. Recording may stop if the buffer fills.";
-pub(super) const RECORDING_HELP: &str = "Instant Replay is switched off and on for you so it records into RAM. Keep Gallery on a persistent drive.";
 pub(super) const STARTUP_FAILED_TITLE: &str = "nvidia-mem-replay could not start";
 pub(super) const STARTUP_FAILED_HELP: &str =
     "Close this window, resolve the error, then launch again.";
