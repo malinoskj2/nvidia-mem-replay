@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 pub(super) const TAB_STATUS: &str = "Status";
 pub(super) const TAB_SETTINGS: &str = "Settings";
+pub(super) const TAB_LOGS: &str = "Logs";
 
 pub(super) const STOP_AND_RESTORE: &str = "Stop and restore";
 pub(super) const RETRY_START: &str = "Start";
@@ -40,6 +41,10 @@ pub(super) const RESTART_NOTICE: &str =
 pub(super) const STARTUP_FAILED_TITLE: &str = "nvidia-mem-replay could not start";
 pub(super) const STARTUP_FAILED_HELP: &str =
     "Close this window, resolve the error, then launch again.";
+
+pub(super) fn log_file_note(path: &std::path::Path) -> String {
+    format!("Also written to {}", path.display())
+}
 
 pub(super) fn tray_unavailable(error: &impl Display) -> String {
     format!("Tray unavailable; closing this window restores the path and quits: {error}")

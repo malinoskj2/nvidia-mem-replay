@@ -96,6 +96,7 @@ pub(super) fn stop_with(
     // retain the journal if restoration or exit fails.
     let (restoration, replayed) = replay::around(controls, || restore(&running.redirect));
     let restoration = restoration.context(text::RESTORE_TEMP_PATH);
+    super::log_replay(&replayed);
     state.notice = replayed.err().map(|error| text::replay_notice(&error));
     let stopped = running.helper.stop();
     let exited = stopped.exited;

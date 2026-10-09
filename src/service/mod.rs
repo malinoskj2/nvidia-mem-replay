@@ -1,5 +1,6 @@
 use crate::{
     config::Config,
+    log,
     storage::Store,
     sys::{
         helper::Helper,
@@ -292,9 +293,11 @@ fn run(
             && !session.stopping
             && let Err(error) = poll(store, session, &mut state.accounting, &mut state.message)
         {
+            log::error(format!("RAM storage stopped unexpectedly: {error:#}"));
             let report = stop(store, &mut state);
             let mut message = format!("{error:#}");
             if !report.is_ok() {
+                log::error(format!("Cleanup after the failure had problems: {report}"));
                 let _ = write!(message, "\nCleanup: {report}");
             }
             state.error = Some(message);
@@ -314,13 +317,32 @@ fn record_start_failure(state: &mut State, error: &anyhow::Error) {
             .is_some_and(nvidia::NvidiaError::is_engine_unavailable)
     });
     if unreachable {
+        if state.message != DisplayStatus::WaitingForNvidia {
+            log::info("The NVIDIA App is not running yet; trying again every 10 seconds");
+        }
         state.message = DisplayStatus::WaitingForNvidia;
         state.error = None;
         state.retry = Some(Instant::now() + NVIDIA_RETRY_INTERVAL);
     } else {
+        log::error(format!("Could not start RAM storage: {error:#}"));
         state.message = DisplayStatus::StartFailed;
         state.error = Some(format!("{error:#}"));
         state.retry = None;
+    }
+}
+
+/// Records how the Instant Replay cycle around a location change went.
+pub(super) fn log_replay(outcome: &Result<replay::Outcome, String>) {
+    match outcome {
+        Ok(replay::Outcome::Restarted) => {
+            log::info("Instant Replay was switched off and on so it records to the new location");
+        }
+        Ok(replay::Outcome::Untouched) => {
+            log::info(
+                "Instant Replay is not capturing right now; it picks up the new location when it starts",
+            );
+        }
+        Err(error) => log::warning(text::replay_notice(error)),
     }
 }
 
@@ -360,12 +382,25 @@ fn keep_redirected(state: &mut State) {
     if !matches!(nvidia::redirected(&session.redirect), Ok(false)) {
         return;
     }
+    log::warning(
+        "NVIDIA switched its temporary files back to the original location (its overlay restarted); redirecting them to RAM again",
+    );
     let redirect = session.redirect.clone();
     let (applied, replayed) = replay::around(&mut replay::overlay(), || nvidia::apply(&redirect));
     state.notice = Some(match (applied, replayed) {
-        (Err(error), _) => text::redirect_again_failed(&format!("{error:#}")),
-        (Ok(()), Err(error)) => text::replay_notice(&error),
-        (Ok(()), Ok(_)) => text::REDIRECTED_AGAIN.to_owned(),
+        (Err(error), _) => {
+            let notice = text::redirect_again_failed(&format!("{error:#}"));
+            log::error(&notice);
+            notice
+        }
+        (Ok(()), replayed) => {
+            log::info(format!("NVIDIA records to {} again", redirect.target));
+            log_replay(&replayed);
+            match replayed {
+                Err(error) => text::replay_notice(&error),
+                Ok(_) => text::REDIRECTED_AGAIN.to_owned(),
+            }
+        }
     });
 }
 
@@ -383,6 +418,9 @@ fn handle_command(
 ) -> CommandOutcome {
     match command {
         Some(Command::Shutdown) => {
+            log::info(
+                "Quitting: restoring NVIDIA's temporary files location and unmounting RAM storage",
+            );
             state.shutdown = Shutdown::Pending;
             state.message = DisplayStatus::Stopping;
             publish(output, state);
@@ -392,24 +430,37 @@ fn handle_command(
             publish(output, state);
 
             if state.shutdown == Shutdown::Complete {
+                log::info("Shutdown complete");
                 return CommandOutcome::Exit;
             }
+            log::error(format!("Could not finish shutdown: {report}"));
         }
         Some(Command::Exit) => {
+            log::warning("Exiting without waiting for cleanup to succeed");
             let _ = stop(store, state);
             return CommandOutcome::Exit;
         }
         Some(Command::Stop) => {
+            log::info("Stop requested");
             state.retry = None;
             let report = stop(store, state);
             state.error = if report.is_ok() {
+                log::info(
+                    "RAM storage stopped; NVIDIA temporary files are back at their original location",
+                );
                 None
             } else {
+                log::error(format!("Stop finished with problems: {report}"));
                 Some(report.to_string())
             };
         }
         Some(Command::Start(config)) => {
+            log::info(format!(
+                "Start requested with a {} MB ceiling",
+                config.memory_limit_mb
+            ));
             if let Err(error) = config.validate() {
+                log::error(format!("Settings rejected: {error}"));
                 state.error = Some(error.to_string());
                 publish(output, state);
                 return CommandOutcome::Continue;
@@ -428,8 +479,10 @@ fn restart(store: &Store, config: &Config, state: &mut State) {
     state.retry = None;
     let report = stop(store, state);
     if !report.is_ok() {
+        log::error(format!("Could not stop the previous session: {report}"));
         state.error = Some(report.to_string());
     } else if let Err(error) = state.accounting.load(store) {
+        log::error(format!("Could not load the lifetime counters: {error:#}"));
         state.error = Some(format!("{error:#}"));
     } else if let Err(error) = start(store, config, state) {
         record_start_failure(state, &error);
@@ -449,10 +502,18 @@ pub(crate) fn recover_with(
     restore: impl FnOnce(&Redirect) -> Result<()>,
 ) -> Result<()> {
     if let Some(redirect) = store.redirect().context(text::READ_REDIRECT_JOURNAL)? {
-        restore(&redirect).context(text::RECOVER_TEMP_PATH)?;
+        log::warning(format!(
+            "An earlier run left NVIDIA pointing at RAM; restoring its temporary files to {}",
+            redirect.original_path
+        ));
+        if let Err(error) = restore(&redirect).context(text::RECOVER_TEMP_PATH) {
+            log::error(format!("Recovery failed: {error:#}"));
+            return Err(error);
+        }
         store
             .clear_redirect()
             .context(text::CLEAR_REDIRECT_JOURNAL)?;
+        log::info("Recovery complete");
     }
 
     Ok(())
@@ -462,16 +523,27 @@ fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {
     state.notice = None;
     let redirect =
         nvidia::plan(config.target()).context("discover NVIDIA temporary files location")?;
+    log::info(format!(
+        "NVIDIA keeps its temporary files at {}; redirecting them to {}",
+        redirect.original_path, redirect.target
+    ));
     state.location = Some(redirect.clone());
     store.save_config(config)?;
 
     let helper = Helper::start(config, &redirect).context("mount RAM filesystem")?;
+    log::info(format!(
+        "RAM storage mounted at {} with a {} MB ceiling",
+        Config::mount(),
+        config.memory_limit_mb
+    ));
     store
         .save_redirect(&redirect)
         .context("save redirect recovery journal")?;
     // Instant Replay reopens its files at the new location only after an off/on cycle.
     let (applied, replayed) = replay::around(&mut replay::overlay(), || nvidia::apply(&redirect));
     applied.context("redirect NVIDIA temporary files")?;
+    log::info("NVIDIA now records to RAM");
+    log_replay(&replayed);
     state.notice = replayed.err().map(|error| text::replay_notice(&error));
 
     state.memory_limit_bytes = Some(config.limit_bytes());

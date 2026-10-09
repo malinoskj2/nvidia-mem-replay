@@ -4,6 +4,7 @@ mod config;
 mod filesystem;
 #[cfg(windows)]
 mod gui;
+mod log;
 mod service;
 mod storage;
 mod sys;
@@ -27,8 +28,20 @@ pub fn run() -> Result<()> {
         filesystem::Launch::Window { tray } => tray,
     };
 
+    log::info(format!(
+        "{APP_NAME} {} starting on {}",
+        env!("CARGO_PKG_VERSION"),
+        log::today()
+    ));
     let startup = (|| -> Result<_> {
         let store = storage::Store::open().context("open application state")?;
+        let log_file = storage::state_directory().join(log::FILE_NAME);
+        if let Err(error) = log::mirror_to(&log_file) {
+            log::warning(format!(
+                "The log file {} could not be created: {error}",
+                log_file.display()
+            ));
+        }
         let config = startup_config(&store, |redirect| {
             sys::nvidia::restore(redirect).map_err(Into::into)
         })?;

@@ -140,7 +140,13 @@ awareness; without it the controls draw in the Windows 95 style. Group-box
 frames are painted by the pages themselves with `DrawThemeBackground` and a
 label for the title, because a child group-box control never erases its
 interior and the pages clip their children, which left stale pixels inside the
-boxes. Coloured status lines are tinted in `WM_CTLCOLORSTATIC`.
+boxes. Coloured status lines are tinted in `WM_CTLCOLORSTATIC`. The Logs tab is a
+read-only multi-line edit fed every status tick from `src/log.rs`, a process-wide
+journal (last 500 entries in memory, all of the session in
+`%LOCALAPPDATA%\NvidiaMemReplay\nvidia-mem-replay.log`) that the worker, the
+recovery path and the window write to at the points a user would want to see:
+redirections, Instant Replay cycles, watchdog re-applies, stops, shutdown and
+every error that reaches the status line.
 
 The icon is rendered by `src/sys/icon.rs` for the tray, and the same renderer
 writes `assets/nvidia-mem-replay.ico`, which `build.rs` embeds as icon

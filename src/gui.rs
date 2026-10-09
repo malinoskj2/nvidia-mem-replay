@@ -4,7 +4,9 @@
 use crate::{
     APP_NAME,
     config::{Config, MAX_MEMORY_LIMIT_MB, MIN_MEMORY_LIMIT_MB},
+    log,
     service::{Shutdown, Status, Worker},
+    storage,
     sys::{
         startup,
         tray::{Tray, TrayAction},
@@ -81,6 +83,8 @@ struct Shared {
     status_extra: i32,
     settings_extra: i32,
     window_extra: i32,
+    /// The last journal entry copied into the Logs tab.
+    log_sequence: u64,
 }
 
 #[derive(Clone)]
@@ -89,6 +93,7 @@ struct Main {
     tab: gui::Tab,
     status: StatusPage,
     settings: SettingsPage,
+    logs: LogsPage,
     footer: gui::Label,
     shutdown_text: gui::Label,
     retry_shutdown: gui::Button,
@@ -470,6 +475,61 @@ impl SettingsPage {
     }
 }
 
+/// Height of the log view; the note with the file path sits under it.
+const LOG_VIEW_HEIGHT: i32 = 262;
+/// Characters after which the view is cleared and refilled from the journal.
+const LOG_VIEW_LIMIT: i32 = 200_000;
+
+/// The Logs tab: a read-only text box that receives journal entries as they are recorded.
+#[derive(Clone)]
+struct LogsPage {
+    page: gui::TabPage,
+    view: gui::Edit,
+    note: gui::Label,
+}
+
+impl LogsPage {
+    fn new(parent: &(impl GuiParent + 'static)) -> Self {
+        let page = gui::TabPage::new(parent, gui::TabPageOpts::default());
+        let view = gui::Edit::new(
+            &page,
+            gui::EditOpts {
+                text: "",
+                position: gui::dpi(GROUP_X, 6),
+                width: gui::dpi_x(GROUP_WIDTH),
+                height: gui::dpi_y(LOG_VIEW_HEIGHT),
+                control_style: co::ES::MULTILINE
+                    | co::ES::READONLY
+                    | co::ES::AUTOVSCROLL
+                    | co::ES::NOHIDESEL,
+                window_style: co::WS::CHILD | co::WS::VISIBLE | co::WS::TABSTOP | co::WS::VSCROLL,
+                ..Default::default()
+            },
+        );
+        let note = path_label(&page, GROUP_X, 6 + LOG_VIEW_HEIGHT + 8, GROUP_WIDTH);
+
+        Self { page, view, note }
+    }
+
+    /// Appends entries at the end of the view, which scrolls to show them.
+    fn append(&self, entries: &[log::Entry]) {
+        if entries.is_empty() {
+            return;
+        }
+        let mut length = self.view.hwnd().GetWindowTextLength().unwrap_or(0);
+        if length > LOG_VIEW_LIMIT {
+            let _ = self.view.set_text("");
+            length = 0;
+        }
+        let text: String = entries
+            .iter()
+            .map(|entry| entry.line().replace('\n', "\r\n") + "\r\n")
+            .collect();
+        self.view.set_selection(length, length);
+        self.view.replace_selection(&text);
+    }
+}
+
 impl Main {
     fn create_and_run(worker: Worker, config: Config, start_hidden: bool) -> Result<()> {
         // A window created visible would flash before `--tray` hides it.
@@ -497,6 +557,7 @@ impl Main {
         };
         let status = StatusPage::new(&wnd);
         let settings = SettingsPage::new(&wnd, &config, start_with_windows);
+        let logs = LogsPage::new(&wnd);
         let tab = gui::Tab::new(
             &wnd,
             gui::TabOpts {
@@ -505,6 +566,7 @@ impl Main {
                 pages: &[
                     (text::TAB_STATUS, status.page.clone()),
                     (text::TAB_SETTINGS, settings.page.clone()),
+                    (text::TAB_LOGS, logs.page.clone()),
                 ],
                 ..Default::default()
             },
@@ -539,6 +601,7 @@ impl Main {
             tab,
             status,
             settings,
+            logs,
             footer,
             shutdown_text,
             retry_shutdown,
@@ -556,6 +619,7 @@ impl Main {
                 status_extra: 0,
                 settings_extra: 0,
                 window_extra: 0,
+                log_sequence: 0,
             })),
         };
         main.events();
@@ -611,6 +675,11 @@ impl Main {
             .page
             .on()
             .wm_ctl_color_static(move |p| Ok(me.colour_label(&p, co::COLOR::WINDOW)));
+        let me = self.clone();
+        self.logs
+            .page
+            .on()
+            .wm_ctl_color_static(move |p| Ok(me.colour_label(&p, co::COLOR::WINDOW)));
 
         let me = self.clone();
         self.settings.apply.on().bn_clicked(move || {
@@ -661,6 +730,12 @@ impl Main {
         self.shutdown_text.hwnd().ShowWindow(co::SW::HIDE);
         self.settings.startup_error.hwnd().ShowWindow(co::SW::HIDE);
         self.status.notice.hwnd().ShowWindow(co::SW::HIDE);
+        // A multi-line edit otherwise stops accepting text after 32 K characters.
+        self.logs.view.limit_text(None);
+        set_text(
+            &self.logs.note,
+            &text::log_file_note(&storage::state_directory().join(log::FILE_NAME)),
+        );
         let initial_error = self.shared.borrow_mut().initial_startup_error.take();
         if let Some(error) = initial_error {
             self.show_startup_error(Some(&error));
@@ -690,6 +765,7 @@ impl Main {
                 self.show();
             }
             TrayAction::Quit => {
+                log::info("Quit chosen from the tray menu");
                 self.shared.borrow_mut().quitting = true;
                 self.on_close();
             }
@@ -710,6 +786,7 @@ impl Main {
         }
         if shared.tray.is_some() && !shared.quitting {
             drop(shared);
+            log::info("Window closed; recording continues from the tray");
             self.wnd.hwnd().ShowWindow(co::SW::HIDE);
             return;
         }
@@ -808,6 +885,12 @@ impl Main {
                 .hwnd()
                 .SetWindowText(recording_label);
         }
+
+        let entries = log::since(self.shared.borrow().log_sequence);
+        if let Some(latest) = entries.last() {
+            self.shared.borrow_mut().log_sequence = latest.sequence;
+            self.logs.append(&entries);
+        }
     }
 
     fn track_shutdown(&self, status: &Status) {
@@ -863,10 +946,19 @@ impl Main {
     fn toggle_startup(&self) {
         let wanted = self.settings.start_with_windows.is_checked();
         match startup::set(wanted) {
-            Ok(()) => self.show_startup_error(None),
+            Ok(()) => {
+                log::info(if wanted {
+                    "Start with Windows enabled"
+                } else {
+                    "Start with Windows disabled"
+                });
+                self.show_startup_error(None);
+            }
             Err(error) => {
+                let message = text::startup_setting_failed(&error);
+                log::error(&message);
                 self.settings.start_with_windows.set_check(!wanted);
-                self.show_startup_error(Some(&text::startup_setting_failed(&error)));
+                self.show_startup_error(Some(&message));
             }
         }
     }
@@ -920,10 +1012,13 @@ impl Main {
                 self.tab.hwnd(),
                 self.status.page.hwnd(),
                 self.settings.page.hwnd(),
+                self.logs.page.hwnd(),
+                self.logs.view.hwnd(),
             ] {
                 resize_by(window, delta);
             }
             for window in [
+                self.logs.note.hwnd(),
                 self.footer.hwnd(),
                 self.shutdown_text.hwnd(),
                 self.retry_shutdown.hwnd(),
@@ -956,7 +1051,7 @@ impl Main {
             || p.hwnd == *self.shutdown_text.hwnd()
         {
             RED
-        } else if p.hwnd == *self.footer.hwnd() {
+        } else if p.hwnd == *self.footer.hwnd() || p.hwnd == *self.logs.note.hwnd() {
             GRAY
         } else {
             BLACK

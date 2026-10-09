@@ -19,6 +19,7 @@ You need **64-bit Windows**, an **NVIDIA GPU**, and **Instant Replay** working i
 
 ## While you play
 
+- The **Logs** tab lists what the app did (redirections, Instant Replay cycles, stops) and any errors. The same lines are written to `%LOCALAPPDATA%\NvidiaMemReplay\nvidia-mem-replay.log`, replaced on each launch, which is the file to attach to a bug report.
 - **Close the window** to keep it running in the tray. Click the tray icon to reopen it; right-click it for **Stop and restore** and **Quit**. If the tray is unavailable, closing quits the app.
 - **Stop and restore** (Settings tab or tray menu) stops RAM recording and restores NVIDIA’s original temporary folder.
 - **Start with Windows** (Settings tab) starts the app hidden in the tray at sign-in. It waits for the NVIDIA App to come up before redirecting, so the order the two start in does not matter.
