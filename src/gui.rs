@@ -398,6 +398,12 @@ impl SettingsPage {
 
 impl Main {
     fn create_and_run(worker: Worker, config: Config, start_hidden: bool) -> Result<()> {
+        // A window created visible would flash before `--tray` hides it.
+        let visibility = if start_hidden {
+            co::WS::NoValue
+        } else {
+            co::WS::VISIBLE
+        };
         let wnd = gui::WindowMain::new(gui::WindowMainOpts {
             title: APP_NAME,
             size: gui::dpi(WINDOW_WIDTH, WINDOW_HEIGHT),
@@ -407,7 +413,7 @@ impl Main {
                 | co::WS::MINIMIZEBOX
                 | co::WS::CLIPCHILDREN
                 | co::WS::BORDER
-                | co::WS::VISIBLE,
+                | visibility,
             ..Default::default()
         });
 
