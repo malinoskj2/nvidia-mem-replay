@@ -23,9 +23,9 @@ const STATUS_INTERVAL_MS: u32 = 250;
 const ICON_RESOURCE: u16 = 1;
 
 const WINDOW_WIDTH: i32 = 470;
-const WINDOW_HEIGHT: i32 = 374;
+const WINDOW_HEIGHT: i32 = 396;
 const MARGIN: i32 = 8;
-const TAB_HEIGHT: i32 = 324;
+const TAB_HEIGHT: i32 = 346;
 const PAGE_WIDTH: i32 = WINDOW_WIDTH - 2 * MARGIN - 8;
 const GROUP_X: i32 = 8;
 const GROUP_WIDTH: i32 = PAGE_WIDTH - 2 * GROUP_X;
@@ -296,7 +296,9 @@ impl SettingsPage {
         let page = gui::TabPage::new(parent, gui::TabPageOpts::default());
         let storage = Self::storage_controls(&page, config);
 
-        let startup_group = frame(&page, text::GROUP_STARTUP, 120, 78);
+        // Tall enough for the error line under the help text, which otherwise paints over
+        // the frame's bottom edge.
+        let startup_group = frame(&page, text::GROUP_STARTUP, 120, 100);
         let start_with_windows = gui::CheckBox::new(
             &page,
             gui::CheckBoxOpts {
@@ -320,9 +322,9 @@ impl SettingsPage {
         );
         let startup_error = label(&page, "", INNER_X, 160 + 2 * LINE, INNER_WIDTH, 1);
 
-        let recording_group = frame(&page, text::GROUP_RECORDING, 206, 90);
-        let recording_help = label(&page, "", INNER_X, 226, INNER_WIDTH, 2);
-        let recording = button(&page, text::STOP_AND_RESTORE, INNER_X, 264, 120);
+        let recording_group = frame(&page, text::GROUP_RECORDING, 228, 90);
+        let recording_help = label(&page, "", INNER_X, 248, INNER_WIDTH, 2);
+        let recording = button(&page, text::STOP_AND_RESTORE, INNER_X, 286, 120);
 
         let frames = vec![storage.group, startup_group, recording_group];
         let (paint_page, paint_frames_list) = (page.clone(), frames.clone());
