@@ -1,10 +1,12 @@
 param([switch]$SkipInstaller)
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot -Parent)
+
 . "$PSScriptRoot/prepare-winfsp.ps1"
 
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 if (!(Test-Path $vswhere)) { throw 'Install Visual Studio C++ build tools.' }
+
 $msbuild = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
 if (!$msbuild) { throw 'Visual Studio C++ MSBuild was not found.' }
 
@@ -18,6 +20,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Rust build failed' }
 # Replace generated packages so obsolete filesystem runtimes cannot ship.
 if (Test-Path dist) { Remove-Item dist -Recurse -Force }
 New-Item -ItemType Directory -Force dist\licenses, dist\source | Out-Null
+
 Copy-Item target\x86_64-pc-windows-msvc\release\nvidia-mem-replay.exe dist\
 Copy-Item "$nativeOutput\memefs-x64.exe" dist\
 Copy-Item $setup dist\winfsp-2.1.25156.msi
@@ -29,30 +32,62 @@ Copy-Item licenses\* dist\licenses\
 $stage = Join-Path $cache 'nvidia-mem-replay-source'
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
+
 $sourceFiles = @('src', 'tests', 'vendor', 'scripts', 'installer', 'licenses', '.cargo', 'Cargo.toml', 'Cargo.lock', 'LICENSE', 'README.md', 'DEVELOPMENT.md')
 foreach ($item in $sourceFiles) { Copy-Item $item $stage -Recurse }
 
 $dependencies = Join-Path $stage 'dependencies'
 $vendorConfig = cargo vendor --locked --versioned-dirs $dependencies
 if ($LASTEXITCODE -ne 0) { throw 'Dependency source bundling failed' }
+
 $portableConfig = [regex]::Replace(($vendorConfig -join "`n"), '(?m)^directory = .+$', 'directory = "dependencies"')
 Add-Content -Path "$stage/.cargo/config.toml" -Value "`n$portableConfig" -Encoding utf8
+
 Compress-Archive -Path "$stage/*", "$stage/.cargo" -DestinationPath dist/source/nvidia-mem-replay-source.zip -Force
 
 if (!$SkipInstaller) {
-    $nsis = Get-Command makensis -ErrorAction SilentlyContinue
-    if (!$nsis) {
-        $candidate = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
-        if (!(Test-Path $candidate)) { throw 'Install NSIS 3 to produce the installer, or pass -SkipInstaller.' }
-        $compiler = $candidate
-    } else { $compiler = $nsis.Source }
+    # Locate NSIS via PATH, standard installation directories, or Chocolatey.
+    $nsis = Get-Command makensis.exe -ErrorAction SilentlyContinue
+
+    if ($nsis) {
+        $compiler = $nsis.Source
+    } else {
+        $candidates = @(
+            "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+            "$env:ProgramFiles\NSIS\makensis.exe",
+            "$env:ChocolateyInstall\bin\makensis.exe",
+            "$env:ChocolateyInstall\lib\nsis\tools\makensis.exe"
+        )
+
+        $compiler = $candidates |
+            Where-Object { Test-Path $_ -PathType Leaf } |
+            Select-Object -First 1
+
+        if (!$compiler -and $env:ChocolateyInstall) {
+            $chocoNsis = Join-Path $env:ChocolateyInstall 'lib\nsis'
+            if (Test-Path $chocoNsis) {
+                $compiler = Get-ChildItem $chocoNsis -Filter makensis.exe -File -Recurse -ErrorAction SilentlyContinue |
+                    Select-Object -First 1 -ExpandProperty FullName
+            }
+        }
+
+        if (!$compiler) {
+            throw 'NSIS makensis.exe not found. Install NSIS 3 or pass -SkipInstaller.'
+        }
+    }
+
+    Write-Host "Using NSIS compiler: $compiler"
+
     & $compiler /WX installer\nvidia-mem-replay.nsi
     if ($LASTEXITCODE -ne 0) { throw 'Installer compilation failed' }
 }
 
 Write-Host 'Built Windows x64 application and WinFsp/MemFS Extended bundle in dist.'
 
-Get-ChildItem dist -File -Recurse | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | Sort-Object FullName | ForEach-Object {
-    $relative = [IO.Path]::GetRelativePath((Join-Path $PWD 'dist'), $_.FullName).Replace('\', '/')
-    "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $relative
-} | Set-Content dist/SHA256SUMS.txt -Encoding utf8
+Get-ChildItem dist -File -Recurse |
+    Where-Object { $_.Name -ne 'SHA256SUMS.txt' } |
+    Sort-Object FullName |
+    ForEach-Object {
+        $relative = [IO.Path]::GetRelativePath((Join-Path $PWD 'dist'), $_.FullName).Replace('\', '/')
+        "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $relative
+    } | Set-Content dist/SHA256SUMS.txt -Encoding utf8
