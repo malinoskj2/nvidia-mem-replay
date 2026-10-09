@@ -6,7 +6,6 @@ use crate::{
     config::{Config, MAX_MEMORY_LIMIT_MB, MIN_MEMORY_LIMIT_MB},
     log,
     service::{Shutdown, Status, Worker},
-    storage,
     sys::{
         startup,
         tray::{Tray, TrayAction},
@@ -25,9 +24,12 @@ const STATUS_INTERVAL_MS: u32 = 250;
 const ICON_RESOURCE: u16 = 1;
 
 const WINDOW_WIDTH: i32 = 470;
-const WINDOW_HEIGHT: i32 = 374;
+/// The tab and its margins; a footer row is added only while it has something to say.
+const WINDOW_HEIGHT: i32 = MARGIN + TAB_HEIGHT + MARGIN;
 const MARGIN: i32 = 8;
 const TAB_HEIGHT: i32 = 324;
+/// Height of the footer row that shows the tray fallback or the shutdown controls.
+const FOOTER_EXTRA: i32 = 36;
 /// Height the Startup group gains while it shows a Run-key error line.
 const STARTUP_ERROR_EXTRA: i32 = LINE + 4;
 /// Height the Status group gains while it shows warnings, notices or errors (two lines).
@@ -78,10 +80,12 @@ struct Shared {
     notice_colour: w::COLORREF,
     /// A Run-key error found before the window existed, shown once it does.
     initial_startup_error: Option<String>,
-    /// Extra height each page currently needs for an expanded message, and the extra the
-    /// window has been given (the larger of the two).
+    /// Extra height each page currently needs for an expanded message; the pages get the
+    /// larger of the two (`page_extra`), the window that plus the footer row when shown.
     status_extra: i32,
     settings_extra: i32,
+    footer_extra: i32,
+    page_extra: i32,
     window_extra: i32,
     /// The last journal entry copied into the Logs tab.
     log_sequence: u64,
@@ -477,8 +481,8 @@ impl SettingsPage {
     }
 }
 
-/// Height of the log view; the note with the file path sits under it.
-const LOG_VIEW_HEIGHT: i32 = 262;
+/// Height of the log view, filling the page.
+const LOG_VIEW_HEIGHT: i32 = 284;
 /// Characters after which the view is cleared and refilled from the journal.
 const LOG_VIEW_LIMIT: i32 = 200_000;
 
@@ -487,7 +491,6 @@ const LOG_VIEW_LIMIT: i32 = 200_000;
 struct LogsPage {
     page: gui::TabPage,
     view: gui::Edit,
-    note: gui::Label,
 }
 
 impl LogsPage {
@@ -508,9 +511,8 @@ impl LogsPage {
                 ..Default::default()
             },
         );
-        let note = path_label(&page, GROUP_X, 6 + LOG_VIEW_HEIGHT + 8, GROUP_WIDTH);
 
-        Self { page, view, note }
+        Self { page, view }
     }
 
     /// Appends entries at the end of the view, which scrolls to show them.
@@ -630,6 +632,8 @@ impl Main {
                 initial_startup_error: startup_error,
                 status_extra: 0,
                 settings_extra: 0,
+                footer_extra: 0,
+                page_extra: 0,
                 window_extra: 0,
                 log_sequence: 0,
                 logs_need_scroll: false,
@@ -738,17 +742,18 @@ impl Main {
             .wnd
             .hwnd()
             .SetTimer(STATUS_TIMER, STATUS_INTERVAL_MS, None);
-        self.retry_shutdown.hwnd().ShowWindow(co::SW::HIDE);
-        self.exit_anyway.hwnd().ShowWindow(co::SW::HIDE);
-        self.shutdown_text.hwnd().ShowWindow(co::SW::HIDE);
-        self.settings.startup_error.hwnd().ShowWindow(co::SW::HIDE);
-        self.status.notice.hwnd().ShowWindow(co::SW::HIDE);
+        for control in [
+            self.retry_shutdown.hwnd(),
+            self.exit_anyway.hwnd(),
+            self.shutdown_text.hwnd(),
+            self.footer.hwnd(),
+            self.settings.startup_error.hwnd(),
+            self.status.notice.hwnd(),
+        ] {
+            control.ShowWindow(co::SW::HIDE);
+        }
         // A multi-line edit otherwise stops accepting text after 32 K characters.
         self.logs.view.limit_text(None);
-        set_text(
-            &self.logs.note,
-            &text::log_file_note(&storage::state_directory().join(log::FILE_NAME)),
-        );
         let initial_error = self.shared.borrow_mut().initial_startup_error.take();
         if let Some(error) = initial_error {
             self.show_startup_error(Some(&error));
@@ -756,15 +761,14 @@ impl Main {
 
         let me = self.clone();
         match Tray::new(move |action| me.on_tray(action)) {
-            Ok(tray) => {
-                self.shared.borrow_mut().tray = Some(tray);
-                let _ = self.footer.hwnd().SetWindowText(text::CLOSE_WITH_TRAY);
-            }
+            Ok(tray) => self.shared.borrow_mut().tray = Some(tray),
             Err(error) => {
-                let _ = self
-                    .footer
-                    .hwnd()
-                    .SetWindowText(&text::tray_unavailable(&error));
+                // Without a tray, closing quits; the footer row appears to say so.
+                let message = text::tray_unavailable(&error);
+                log::warning(&message);
+                set_text(&self.footer, &message);
+                show(&self.footer, true);
+                self.show_footer_row();
             }
         }
         self.refresh();
@@ -819,6 +823,13 @@ impl Main {
             .hwnd()
             .SetWindowText(text::SHUTDOWN_PENDING);
         self.shutdown_text.hwnd().ShowWindow(co::SW::SHOW);
+        self.show_footer_row();
+    }
+
+    /// Adds the footer row under the tab; it is never taken away again.
+    fn show_footer_row(&self) {
+        self.shared.borrow_mut().footer_extra = FOOTER_EXTRA;
+        self.fit_window();
     }
 
     fn refresh(&self) {
@@ -1016,36 +1027,40 @@ impl Main {
         }
     }
 
-    /// Gives the window, the tab and both pages the larger of the two pages' extra heights,
-    /// moving the footer controls along, and repaints everything.
+    /// Gives the tab and the pages the larger of the pages' extra heights, moving the footer
+    /// controls along; the window gets that plus the footer row when it is shown. Repaints.
     fn fit_window(&self) {
-        let delta = {
+        let (page_delta, window_delta) = {
             let mut shared = self.shared.borrow_mut();
-            let wanted = shared.status_extra.max(shared.settings_extra);
-            let delta = wanted - shared.window_extra;
-            shared.window_extra = wanted;
-            gui::dpi_y(delta)
+            let page_wanted = shared.status_extra.max(shared.settings_extra);
+            let window_wanted = page_wanted + shared.footer_extra;
+            let page_delta = page_wanted - shared.page_extra;
+            let window_delta = window_wanted - shared.window_extra;
+            shared.page_extra = page_wanted;
+            shared.window_extra = window_wanted;
+            (gui::dpi_y(page_delta), gui::dpi_y(window_delta))
         };
-        if delta != 0 {
+        if page_delta != 0 {
             for window in [
-                self.wnd.hwnd(),
                 self.tab.hwnd(),
                 self.status.page.hwnd(),
                 self.settings.page.hwnd(),
                 self.logs.page.hwnd(),
                 self.logs.view.hwnd(),
             ] {
-                resize_by(window, delta);
+                resize_by(window, page_delta);
             }
             for window in [
-                self.logs.note.hwnd(),
                 self.footer.hwnd(),
                 self.shutdown_text.hwnd(),
                 self.retry_shutdown.hwnd(),
                 self.exit_anyway.hwnd(),
             ] {
-                shift_by(window, delta);
+                shift_by(window, page_delta);
             }
+        }
+        if window_delta != 0 {
+            resize_by(self.wnd.hwnd(), window_delta);
         }
         // Moved controls and the strip a shorter window uncovers keep stale pixels otherwise.
         if let Ok(client) = self.wnd.hwnd().GetClientRect() {
@@ -1071,7 +1086,7 @@ impl Main {
             || p.hwnd == *self.shutdown_text.hwnd()
         {
             RED
-        } else if p.hwnd == *self.footer.hwnd() || p.hwnd == *self.logs.note.hwnd() {
+        } else if p.hwnd == *self.footer.hwnd() {
             GRAY
         } else {
             BLACK

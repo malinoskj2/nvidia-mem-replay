@@ -31,8 +31,6 @@ pub(super) const STOP_HELP: &str =
     "Stops recording to RAM, restores NVIDIA's original location and discards the buffer.";
 pub(super) const START_HELP: &str =
     "Mounts the RAM storage and redirects NVIDIA's temporary files to it.";
-pub(super) const CLOSE_WITH_TRAY: &str =
-    "Closing this window keeps recording in the tray. Right-click the tray icon to quit.";
 pub(super) const SHUTDOWN_PENDING: &str = "Restoring the temporary path and stopping RAM storage…";
 pub(super) const SHUTDOWN_FAILED_HELP: &str =
     "Could not finish shutdown. Retry, or exit anyway and restore Temporary files in Alt+Z.";
@@ -41,10 +39,6 @@ pub(super) const RESTART_NOTICE: &str =
 pub(super) const STARTUP_FAILED_TITLE: &str = "nvidia-mem-replay could not start";
 pub(super) const STARTUP_FAILED_HELP: &str =
     "Close this window, resolve the error, then launch again.";
-
-pub(super) fn log_file_note(path: &std::path::Path) -> String {
-    format!("Also written to {}", path.display())
-}
 
 pub(super) fn tray_unavailable(error: &impl Display) -> String {
     format!("Tray unavailable; closing this window restores the path and quits: {error}")
