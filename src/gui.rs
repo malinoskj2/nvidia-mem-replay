@@ -85,6 +85,8 @@ struct Shared {
     window_extra: i32,
     /// The last journal entry copied into the Logs tab.
     log_sequence: u64,
+    /// Lines were appended while the Logs tab was hidden; scroll once it shows.
+    logs_need_scroll: bool,
 }
 
 #[derive(Clone)]
@@ -527,12 +529,14 @@ impl LogsPage {
             .collect();
         self.view.set_selection(length, length);
         self.view.replace_selection(&text);
-        self.scroll_to_caret();
     }
 
-    /// A read-only edit without focus does not follow its caret by itself.
+    /// Scrolls to the newest line. A read-only edit without focus does not follow its caret
+    /// by itself, and a hidden one ignores the request, so this runs once the tab is showing.
     #[allow(unsafe_code)]
-    fn scroll_to_caret(&self) {
+    fn scroll_to_end(&self) {
+        let length = self.view.hwnd().GetWindowTextLength().unwrap_or(0);
+        self.view.set_selection(length, length);
         // SAFETY: EM_SCROLLCARET takes no parameters and is sent to this control's own handle.
         unsafe { self.view.hwnd().SendMessage(w::msg::EmScrollCaret {}) };
     }
@@ -628,6 +632,7 @@ impl Main {
                 settings_extra: 0,
                 window_extra: 0,
                 log_sequence: 0,
+                logs_need_scroll: false,
             })),
         };
         main.events();
@@ -896,8 +901,15 @@ impl Main {
 
         let entries = log::since(self.shared.borrow().log_sequence);
         if let Some(latest) = entries.last() {
-            self.shared.borrow_mut().log_sequence = latest.sequence;
+            let mut shared = self.shared.borrow_mut();
+            shared.log_sequence = latest.sequence;
+            shared.logs_need_scroll = true;
+            drop(shared);
             self.logs.append(&entries);
+        }
+        if self.shared.borrow().logs_need_scroll && self.logs.view.hwnd().IsWindowVisible() {
+            self.logs.scroll_to_end();
+            self.shared.borrow_mut().logs_need_scroll = false;
         }
     }
 
