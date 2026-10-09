@@ -261,15 +261,8 @@ impl eframe::App for App {
     }
 }
 
+/// Only the warnings; the plain memory figures are not shown.
 fn show_memory_status(ui: &mut egui::Ui, sample: &Sample, limit: u64) {
-    ui.label(
-        RichText::new(text::memory_summary(
-            sample.resident_bytes,
-            sample.available_bytes,
-        ))
-        .small()
-        .color(theme::GRAY_TEXT),
-    );
     if sample.available_bytes < 1_000_000_000 {
         ui.label(RichText::new(text::LOW_MEMORY_WARNING).color(theme::WARNING_TEXT));
     }

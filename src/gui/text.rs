@@ -56,18 +56,6 @@ pub(super) fn buffer_allocated(bytes: Option<u64>) -> String {
     )
 }
 
-pub(super) fn memory_summary(resident_bytes: Option<u64>, available_bytes: u64) -> String {
-    let resident = resident_bytes.map_or_else(
-        || "unavailable".to_owned(),
-        |bytes| format!("{:.1} MB", bytes as f64 / 1e6),
-    );
-
-    format!(
-        "Filesystem process RAM: {resident} · System available: {:.0} MB",
-        available_bytes as f64 / 1e6
-    )
-}
-
 pub(super) fn buffer_ceiling(bytes: u64) -> String {
     format!("{} MB", bytes / 1_000_000)
 }
