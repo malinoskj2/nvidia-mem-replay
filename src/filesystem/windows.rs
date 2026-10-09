@@ -1,11 +1,12 @@
 use crate::{
     config::{Config, MAX_DRIVE, MAX_MEMORY_LIMIT_MB, MIN_DRIVE, MIN_MEMORY_LIMIT_MB},
-    sys::{helper::Helper, nvidia},
+    sys::{helper::Helper, icon, nvidia, startup},
 };
 use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
 use std::{
     io::{self, BufRead, Read, Write},
+    path::PathBuf,
     sync::mpsc,
     thread,
     time::Duration,
@@ -17,6 +18,9 @@ const MAX_STOP_COMMAND_BYTES: u64 = 512;
 #[derive(Parser)]
 #[command(name = crate::APP_NAME)]
 struct Cli {
+    /// Start hidden in the notification area; the Start-with-Windows entry uses this.
+    #[arg(long = "tray")]
+    tray: bool,
     #[command(subcommand)]
     command: Option<Mode>,
 }
@@ -31,6 +35,17 @@ enum Mode {
         #[arg(long, value_parser = clap::value_parser!(u32).range(i64::from(MIN_MEMORY_LIMIT_MB)..=i64::from(MAX_MEMORY_LIMIT_MB)))]
         memory_limit_mb: u32,
     },
+    /// Write the application icon as a Windows `.ico` file (used to refresh `assets/`).
+    #[command(hide = true)]
+    Icon { path: PathBuf },
+}
+
+/// What this process was started to do.
+pub(crate) enum Launch {
+    /// A helper mode ran to completion.
+    Handled,
+    /// Show the desktop application, hidden in the tray when `tray` is set.
+    Window { tray: bool },
 }
 
 fn drive(value: &str) -> Result<char, String> {
@@ -41,20 +56,28 @@ fn drive(value: &str) -> Result<char, String> {
     }
 }
 
-pub(super) fn dispatch() -> Result<bool> {
-    let Some(Mode::Filesystem {
-        drive,
-        memory_limit_mb,
-    }) = Cli::try_parse()?.command
-    else {
-        return Ok(false);
-    };
-
-    run(&Config {
-        drive,
-        memory_limit_mb,
-    })?;
-    Ok(true)
+pub(super) fn dispatch() -> Result<Launch> {
+    let cli = Cli::try_parse()?;
+    match cli.command {
+        Some(Mode::Filesystem {
+            drive,
+            memory_limit_mb,
+        }) => {
+            run(&Config {
+                drive,
+                memory_limit_mb,
+            })?;
+            Ok(Launch::Handled)
+        }
+        Some(Mode::Icon { path }) => {
+            std::fs::write(&path, icon::ico())
+                .with_context(|| format!("write {}", path.display()))?;
+            Ok(Launch::Handled)
+        }
+        None => Ok(Launch::Window {
+            tray: cli.tray || std::env::args().any(|argument| argument == startup::TRAY_FLAG),
+        }),
+    }
 }
 
 fn run(config: &Config) -> Result<()> {

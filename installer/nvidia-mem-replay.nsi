@@ -8,6 +8,11 @@ InstallDir "$PROGRAMFILES64\nvidia-mem-replay"
 RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 !define MUI_ABORTWARNING
+!define MUI_ICON "..\assets\nvidia-mem-replay.ico"
+!define MUI_UNICON "..\assets\nvidia-mem-replay.ico"
+!define MUI_FINISHPAGE_RUN "$INSTDIR\nvidia-mem-replay.exe"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch nvidia-mem-replay now"
+!define MUI_FINISHPAGE_RUN_FUNCTION LaunchApplication
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
@@ -16,6 +21,12 @@ SetCompressor /SOLID lzma
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
+
+# The installer is elevated; start the app as the logged-on user so it sees that user's
+# NVIDIA overlay and tray.
+Function LaunchApplication
+  Exec '"$WINDIR\explorer.exe" "$INSTDIR\nvidia-mem-replay.exe"'
+FunctionEnd
 
 Function .onInit
   ${IfNot} ${RunningX64}
@@ -73,9 +84,10 @@ Section "nvidia-mem-replay"
 
   WriteUninstaller "$INSTDIR\uninstall.exe"
   CreateDirectory "$SMPROGRAMS\nvidia-mem-replay"
-  CreateShortcut "$SMPROGRAMS\nvidia-mem-replay\nvidia-mem-replay.lnk" "$INSTDIR\nvidia-mem-replay.exe"
+  CreateShortcut "$SMPROGRAMS\nvidia-mem-replay\nvidia-mem-replay.lnk" "$INSTDIR\nvidia-mem-replay.exe" "" "$INSTDIR\nvidia-mem-replay.exe" 0
   CreateShortcut "$SMPROGRAMS\nvidia-mem-replay\Uninstall.lnk" "$INSTDIR\uninstall.exe"
 
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NvidiaMemReplay" "DisplayIcon" "$INSTDIR\nvidia-mem-replay.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NvidiaMemReplay" "DisplayName" "nvidia-mem-replay"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NvidiaMemReplay" "DisplayVersion" "0.1.0"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\NvidiaMemReplay" "UninstallString" '"$INSTDIR\uninstall.exe"'

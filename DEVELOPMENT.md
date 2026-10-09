@@ -113,6 +113,27 @@ notice asking the user to toggle it.
 A journal is saved before redirection. Stop/quit restores through the engine
 before unmounting; when the engine cannot be reached, the registry value it
 reads at its next start is restored instead.
+
+Two situations are handled in the worker loop. When a start fails because the
+engine is unreachable (the NVIDIA App has not started yet, typically at
+sign-in), the worker shows "Waiting for the NVIDIA App" and retries every ten
+seconds instead of reporting an error. While recording, it reads the live
+location every five seconds: the overlay re-pushes its own stored copy of the
+location (`GallerySettings.json`) whenever it starts, which silently undoes the
+redirection, so a changed value is applied again with the usual Instant Replay
+cycle and a notice is shown.
+
+`--tray` starts the window hidden; the Start-with-Windows setting writes that
+command line to the user's `Run` key (`src/sys/startup.rs`).
+
+The icon is rendered by `src/sys/icon.rs` for the tray and the window, and the
+same renderer writes `assets/nvidia-mem-replay.ico`, which `build.rs` embeds in
+the executable (Start menu, Explorer, installer shortcuts). After changing the
+renderer, regenerate the file with
+`cargo run -- icon assets/nvidia-mem-replay.ico`; a unit test fails while the
+two differ. The title bar is set to the flat dialog colour with
+`DwmSetWindowAttribute` (`src/sys/window.rs`), since Windows 11 would
+otherwise tint it with the wallpaper.
 The GUI sends its exact recovery snapshot to the Rust supervisor before
 readiness. The supervisor restores it on GUI control-pipe EOF, including GUI
 crashes. Its own exit closes the native

@@ -17,6 +17,9 @@ pub(super) const GROUP_STATUS: &str = "Status";
 pub(super) const GROUP_LOCATIONS: &str = "Temporary files";
 pub(super) const GROUP_STORAGE: &str = "RAM storage";
 pub(super) const GROUP_RECORDING: &str = "Recording";
+pub(super) const GROUP_STARTUP: &str = "Startup";
+pub(super) const START_WITH_WINDOWS: &str = "Start with Windows";
+pub(super) const START_WITH_WINDOWS_HELP: &str = "Starts hidden in the notification area at sign-in and waits for the NVIDIA App before redirecting.";
 pub(super) const ORIGINAL_LOCATION: &str = "NVIDIA location";
 pub(super) const RAM_LOCATION: &str = "RAM location";
 pub(super) const BUFFER_CEILING: &str = "Buffer ceiling";
@@ -44,6 +47,10 @@ pub(super) const STARTUP_FAILED_HELP: &str =
 
 pub(super) fn tray_unavailable(error: &impl Display) -> String {
     format!("Tray unavailable; closing will quit: {error}")
+}
+
+pub(super) fn startup_setting_failed(error: &impl Display) -> String {
+    format!("Could not update the Start with Windows entry: {error}")
 }
 
 pub(super) fn status(message: &str) -> String {

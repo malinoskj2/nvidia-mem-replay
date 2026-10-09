@@ -26,6 +26,11 @@ use accounting::Accounting;
 use cleanup::{complete_shutdown, stop};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// How often to try again while NVIDIA's `ShadowPlay` engine is not reachable (for example
+/// when this app starts at logon before the NVIDIA App has finished starting).
+const NVIDIA_RETRY_INTERVAL: Duration = Duration::from_secs(10);
+/// How often to confirm that the engine still uses the RAM location.
+const REDIRECTION_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Shutdown {
@@ -41,6 +46,7 @@ pub(crate) enum DisplayStatus {
     #[default]
     Preparing,
     StartFailed,
+    WaitingForNvidia,
     Waiting,
     Writing,
     Ready,
@@ -55,6 +61,7 @@ impl DisplayStatus {
         match self {
             Self::Preparing => "Preparing RAM storage…",
             Self::StartFailed => "Could not start RAM storage",
+            Self::WaitingForNvidia => "Waiting for the NVIDIA App to start…",
             Self::Waiting => "RAM ready · waiting for Instant Replay writes",
             Self::Writing => "Data is being written to RAM",
             Self::Ready => "RAM ready · no writes in the last 2 seconds",
@@ -209,6 +216,11 @@ struct State {
     error: Option<String>,
     notice: Option<String>,
     shutdown: Shutdown,
+    /// The configuration to use when a start is retried.
+    config: Config,
+    /// When to try starting again because the engine was unreachable.
+    retry: Option<Instant>,
+    redirection_checked: Option<Instant>,
 }
 
 impl State {
@@ -253,6 +265,7 @@ fn run(
 ) {
     let mut state = State {
         message: DisplayStatus::StartFailed,
+        config: config.clone(),
         ..State::default()
     };
 
@@ -261,7 +274,7 @@ fn run(
         start(store, config, &mut state)
     });
     if let Err(error) = startup {
-        state.error = Some(format!("{error:#}"));
+        record_start_failure(&mut state, &error);
     }
     publish(output, &state);
 
@@ -278,6 +291,8 @@ fn run(
             CommandOutcome::Exit => break,
         }
 
+        retry_start_when_due(store, &mut state);
+
         if let Some(session) = &mut state.session
             && !session.stopping
             && let Err(error) = poll(store, session, &mut state.accounting, &mut state.message)
@@ -290,8 +305,73 @@ fn run(
             state.error = Some(message);
         }
 
+        keep_redirected(&mut state);
         publish(output, &state);
     }
+}
+
+/// An unreachable engine is not an error to show: the NVIDIA App may simply not have
+/// started yet, so the start is retried until it is there.
+fn record_start_failure(state: &mut State, error: &anyhow::Error) {
+    let unreachable = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<nvidia::NvidiaError>()
+            .is_some_and(nvidia::NvidiaError::is_engine_unavailable)
+    });
+    if unreachable {
+        state.message = DisplayStatus::WaitingForNvidia;
+        state.error = None;
+        state.retry = Some(Instant::now() + NVIDIA_RETRY_INTERVAL);
+    } else {
+        state.message = DisplayStatus::StartFailed;
+        state.error = Some(format!("{error:#}"));
+        state.retry = None;
+    }
+}
+
+fn retry_start_when_due(store: &Store, state: &mut State) {
+    if state.session.is_some() || state.retry.is_none_or(|retry| Instant::now() < retry) {
+        return;
+    }
+
+    state.retry = None;
+    let config = state.config.clone();
+    let attempt = state
+        .accounting
+        .load(store)
+        .and_then(|()| start(store, &config, state));
+    match attempt {
+        Ok(()) => state.error = None,
+        Err(error) => record_start_failure(state, &error),
+    }
+}
+
+/// The overlay re-pushes its own stored location whenever it restarts, which would leave
+/// NVIDIA recording to disk while the RAM drive is mounted; put the redirection back.
+fn keep_redirected(state: &mut State) {
+    let Some(session) = &state.session else {
+        return;
+    };
+    if session.stopping
+        || state
+            .redirection_checked
+            .is_some_and(|checked| checked.elapsed() < REDIRECTION_CHECK_INTERVAL)
+    {
+        return;
+    }
+    state.redirection_checked = Some(Instant::now());
+
+    // An unreachable engine is left alone; a value that changed is restored.
+    if !matches!(nvidia::redirected(&session.redirect), Ok(false)) {
+        return;
+    }
+    let redirect = session.redirect.clone();
+    let (applied, replayed) = replay::around(&mut replay::overlay(), || nvidia::apply(&redirect));
+    state.notice = Some(match (applied, replayed) {
+        (Err(error), _) => text::redirect_again_failed(&format!("{error:#}")),
+        (Ok(()), Err(error)) => text::replay_notice(&error),
+        (Ok(()), Ok(_)) => text::REDIRECTED_AGAIN.to_owned(),
+    });
 }
 
 enum CommandOutcome {
@@ -325,6 +405,7 @@ fn handle_command(
             return CommandOutcome::Exit;
         }
         Some(Command::Stop) => {
+            state.retry = None;
             let report = stop(store, state);
             state.error = if report.is_ok() {
                 None
@@ -348,13 +429,15 @@ fn handle_command(
 }
 
 fn restart(store: &Store, config: &Config, state: &mut State) {
+    state.config = config.clone();
+    state.retry = None;
     let report = stop(store, state);
     if !report.is_ok() {
         state.error = Some(report.to_string());
     } else if let Err(error) = state.accounting.load(store) {
         state.error = Some(format!("{error:#}"));
     } else if let Err(error) = start(store, config, state) {
-        state.error = Some(format!("{error:#}"));
+        record_start_failure(state, &error);
     } else {
         state.error = None;
     }
@@ -398,6 +481,7 @@ fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {
 
     state.memory_limit_bytes = Some(config.limit_bytes());
     state.message = DisplayStatus::Waiting;
+    state.redirection_checked = Some(Instant::now());
     let now = Instant::now();
     state.session = Some(Session {
         helper,

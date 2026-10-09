@@ -147,6 +147,24 @@ fn visuals() -> Visuals {
     visuals
 }
 
+/// Styles the widgets added to `ui` as Windows edit fields: white, gray border, square.
+pub(super) fn field_style(ui: &mut egui::Ui) {
+    const FIELD_BORDER: Color32 = Color32::from_rgb(0x7A, 0x7A, 0x7A);
+    let widgets = &mut ui.style_mut().visuals.widgets;
+    for (state, border) in [
+        (&mut widgets.inactive, FIELD_BORDER),
+        (&mut widgets.hovered, HIGHLIGHT),
+        (&mut widgets.active, PRESSED_BORDER),
+        (&mut widgets.open, HIGHLIGHT),
+    ] {
+        state.bg_fill = FIELD_BACKGROUND;
+        state.weak_bg_fill = FIELD_BACKGROUND;
+        state.bg_stroke = Stroke::new(BORDER_WIDTH, border);
+        state.corner_radius = CornerRadius::ZERO;
+    }
+    ui.style_mut().spacing.button_padding = egui::vec2(6.0, 3.0);
+}
+
 /// A titled group box: an etched frame whose title sits on the top border.
 pub(super) fn group_box<R>(
     ui: &mut egui::Ui,

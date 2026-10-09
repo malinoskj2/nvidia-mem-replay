@@ -12,7 +12,10 @@ pub(crate) const MAX_RECOVERY_SNAPSHOT_BYTES: usize = 65_536;
 mod windows;
 
 #[cfg(windows)]
-pub(crate) fn dispatch() -> anyhow::Result<bool> {
+pub(crate) use windows::Launch;
+
+#[cfg(windows)]
+pub(crate) fn dispatch() -> anyhow::Result<Launch> {
     windows::dispatch()
 }
 

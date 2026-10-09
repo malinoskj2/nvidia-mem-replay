@@ -138,6 +138,26 @@ pub(crate) fn apply(redirect: &Redirect) -> Result<(), NvidiaError> {
     }
 }
 
+/// Whether the engine still uses the RAM location; the overlay re-pushes its own stored
+/// location whenever it restarts, which silently undoes the redirection.
+pub(crate) fn redirected(redirect: &Redirect) -> Result<bool, NvidiaError> {
+    Ok(redirect.restores(&live_path()?))
+}
+
+impl NvidiaError {
+    /// The engine could not be reached at all, as opposed to refusing a value.
+    pub(crate) fn is_engine_unavailable(&self) -> bool {
+        #[cfg(windows)]
+        {
+            matches!(self, Self::Api(_))
+        }
+        #[cfg(not(windows))]
+        {
+            matches!(self, Self::Unsupported)
+        }
+    }
+}
+
 impl Redirect {
     /// Only this app's own value is restored; a later user or overlay edit takes precedence.
     fn restores(&self, current: &str) -> bool {

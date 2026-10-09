@@ -138,21 +138,6 @@ fn show_window(ctx: &Context) {
 }
 
 fn replay_icon() -> Result<Icon, tray_icon::BadIcon> {
-    let mut rgba = Vec::with_capacity(32 * 32 * 4);
-    for y in 0_i32..32 {
-        for x in 0_i32..32 {
-            let inside = (x - 16).pow(2) + (y - 16).pow(2) < 225;
-            let triangle = (10..=23).contains(&y) && x >= 12 && x <= 24 - (y - 16).abs();
-            let pixel = if triangle {
-                [240, 255, 245, 255]
-            } else if inside {
-                [47, 154, 93, 255]
-            } else {
-                [0, 0, 0, 0]
-            };
-            rgba.extend_from_slice(&pixel);
-        }
-    }
-
-    Icon::from_rgba(rgba, 32, 32)
+    const SIZE: u32 = 32;
+    Icon::from_rgba(super::icon::rgba(SIZE), SIZE, SIZE)
 }

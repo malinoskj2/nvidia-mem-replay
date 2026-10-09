@@ -1,7 +1,7 @@
 use crate::{
     config::{Config, MAX_DRIVE, MAX_MEMORY_LIMIT_MB, MIN_DRIVE, MIN_MEMORY_LIMIT_MB},
     service::{Shutdown, Status, Worker},
-    sys::tray::Tray,
+    sys::{startup, tray::Tray},
     telemetry::Sample,
 };
 use eframe::egui::{self, RichText};
@@ -34,14 +34,29 @@ pub(crate) struct App {
     config: Config,
     tab: Tab,
     lifecycle: Lifecycle,
+    start_with_windows: bool,
+    startup_error: Option<String>,
+    /// eframe shows the window after its first frame, so a tray start hides it on the second.
+    hide_after_first_frame: bool,
+    frames: u8,
 }
 
 impl App {
-    pub(crate) fn new(cc: &eframe::CreationContext<'_>, worker: Worker, config: Config) -> Self {
+    pub(crate) fn new(
+        cc: &eframe::CreationContext<'_>,
+        worker: Worker,
+        config: Config,
+        start_hidden: bool,
+    ) -> Self {
         theme::install(&cc.egui_ctx);
+        crate::sys::window::match_dialog_title_bar();
         let (tray, tray_error) = match Tray::new(&cc.egui_ctx, worker.stop_handle()) {
             Ok(tray) => (Some(tray), None),
             Err(error) => (None, Some(text::tray_unavailable(&error))),
+        };
+        let (start_with_windows, startup_error) = match startup::enabled() {
+            Ok(enabled) => (enabled, None),
+            Err(error) => (false, Some(text::startup_setting_failed(&error))),
         };
 
         Self {
@@ -51,7 +66,32 @@ impl App {
             config,
             tab: Tab::Status,
             lifecycle: Lifecycle::Running,
+            start_with_windows,
+            startup_error,
+            hide_after_first_frame: start_hidden,
+            frames: 0,
         }
+    }
+
+    fn show_startup_setting(&mut self, ui: &mut egui::Ui) {
+        theme::group_box(ui, text::GROUP_STARTUP, |ui| {
+            if ui
+                .checkbox(&mut self.start_with_windows, text::START_WITH_WINDOWS)
+                .changed()
+            {
+                match startup::set(self.start_with_windows) {
+                    Ok(()) => self.startup_error = None,
+                    Err(error) => {
+                        self.start_with_windows = !self.start_with_windows;
+                        self.startup_error = Some(text::startup_setting_failed(&error));
+                    }
+                }
+            }
+            ui.label(RichText::new(text::START_WITH_WINDOWS_HELP).color(theme::GRAY_TEXT));
+            if let Some(error) = &self.startup_error {
+                ui.label(RichText::new(error).color(theme::ERROR_TEXT));
+            }
+        });
     }
 
     fn limit(&self, status: &Status) -> u64 {
@@ -128,6 +168,8 @@ impl App {
                 }
             });
         });
+
+        self.show_startup_setting(ui);
 
         theme::group_box(ui, text::GROUP_RECORDING, |ui| {
             let (label, help) = if status.mounted {
@@ -226,6 +268,12 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        self.frames = self.frames.saturating_add(1);
+        if self.hide_after_first_frame && self.frames == 2 {
+            self.hide_after_first_frame = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+
         let status = self.worker.status();
         self.handle_close(ctx, status.shutdown);
 
@@ -276,18 +324,26 @@ fn show_notices(ui: &mut egui::Ui, status: &Status) {
 fn show_storage_settings(ui: &mut egui::Ui, config: &mut Config) {
     ui.horizontal(|ui| {
         ui.label(text::DRIVE);
-        egui::ComboBox::from_id_salt(DRIVE_SELECTOR_ID)
-            .selected_text(text::drive(config.drive))
-            .show_ui(ui, |ui| {
-                for letter in MIN_DRIVE..=MAX_DRIVE {
-                    ui.selectable_value(&mut config.drive, letter, text::drive(letter));
-                }
-            });
+        ui.scope(|ui| {
+            theme::field_style(ui);
+            egui::ComboBox::from_id_salt(DRIVE_SELECTOR_ID)
+                .selected_text(text::drive(config.drive))
+                .width(64.0)
+                .show_ui(ui, |ui| {
+                    for letter in MIN_DRIVE..=MAX_DRIVE {
+                        ui.selectable_value(&mut config.drive, letter, text::drive(letter));
+                    }
+                });
+        });
+        ui.add_space(8.0);
         ui.label(text::MEMORY_CEILING);
-        ui.add(
-            egui::DragValue::new(&mut config.memory_limit_mb)
-                .range(MIN_MEMORY_LIMIT_MB..=MAX_MEMORY_LIMIT_MB),
-        );
+        ui.scope(|ui| {
+            theme::field_style(ui);
+            ui.add(
+                egui::DragValue::new(&mut config.memory_limit_mb)
+                    .range(MIN_MEMORY_LIMIT_MB..=MAX_MEMORY_LIMIT_MB),
+            );
+        });
     });
 }
 
@@ -296,6 +352,7 @@ pub(crate) struct StartupError(String);
 impl StartupError {
     pub(crate) fn new(cc: &eframe::CreationContext<'_>, message: String) -> Self {
         theme::install(&cc.egui_ctx);
+        crate::sys::window::match_dialog_title_bar();
         Self(message)
     }
 }
