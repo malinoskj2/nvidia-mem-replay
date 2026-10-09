@@ -1,32 +1,36 @@
 name: Check
+
 on: [push, pull_request]
+
 permissions:
   contents: read
 
 jobs:
   native-regressions:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: python3 tests/native/run.py
+
   rust:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-24.04, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt, clippy
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+
   windows-package:
     needs: [rust, native-regressions]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.95.0
       - run: choco install nsis -y --no-progress
       - run: ./scripts/build-windows.ps1
@@ -37,7 +41,6 @@ jobs:
           New-Item -ItemType Directory release | Out-Null
           Compress-Archive -Path dist/* -DestinationPath release/nvidia-mem-replay-windows-x64.zip
           Copy-Item dist/nvidia-mem-replay-setup-x64.exe release/
-
           Get-ChildItem release -File | Sort-Object Name | ForEach-Object {
             "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
           } | Set-Content release/SHA256SUMS.txt -Encoding utf8
@@ -51,7 +54,7 @@ jobs:
   attest:
     needs: windows-package
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       id-token: write
