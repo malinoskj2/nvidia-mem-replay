@@ -98,7 +98,7 @@ verified against NVIDIA App 11.0.9; the engine logs every version or client-id
 mismatch to `%ProgramData%\NVIDIA Corporation\ShadowPlay\CaptureCore.log`.
 This is the only module with `unsafe` Rust of its own; the two other `unsafe`
 blocks in the crate are single winsafe calls (a virtual-key constant in
-`src/sys/hotkey.rs`, `EM_SCROLLCARET` for the Logs view in `src/gui.rs`).
+`src/sys/hotkey.rs`, `EM_SCROLLCARET` for the Logs view in `src/gui/logs.rs`).
 
 Discovery reads the live value from the engine, so the NVIDIA App must be
 running. The registry is read only to preserve the original value type and
@@ -137,7 +137,8 @@ cycle and a notice is shown.
 `--tray` starts the window hidden; the Start-with-Windows setting writes that
 command line to the user's `Run` key (`src/sys/startup.rs`).
 
-The window (`src/gui.rs`) is built from the Windows common controls through
+The window (`src/gui.rs` with one module per page under `src/gui/`, and the
+shared layout helpers in `src/gui/layout.rs`) is built from the Windows common controls through
 [winsafe](https://github.com/rodrigocfd/winsafe)'s `gui` module: a tab control
 with two child pages, static labels, a combo box, an edit with an up-down
 buddy, a check box and push buttons, all in the system message font. `build.rs`
