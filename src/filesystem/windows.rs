@@ -101,14 +101,17 @@ fn run(volume: &Volume) -> Result<()> {
     let mut filesystem = Helper::start_memefs(volume).context("start bundled MemFS Extended")?;
 
     let (stop, receiver) = mpsc::sync_channel(1);
-    let reader = thread::spawn(move || {
-        let mut line = Vec::new();
-        let _ = io::stdin()
-            .lock()
-            .take(MAX_STOP_COMMAND_BYTES)
-            .read_until(b'\n', &mut line);
-        let _ = stop.send(());
-    });
+    let reader = thread::Builder::new()
+        .name("stdin-stop".to_owned())
+        .spawn(move || {
+            let mut line = Vec::new();
+            let _ = io::stdin()
+                .lock()
+                .take(MAX_STOP_COMMAND_BYTES)
+                .read_until(b'\n', &mut line);
+            let _ = stop.send(());
+        })
+        .context("spawn the stdin stop reader")?;
 
     let mut stdout = io::stdout().lock();
     let reporting = (|| -> Result<()> {
