@@ -30,7 +30,7 @@ mod status;
 mod text;
 
 const STATUS_TIMER: usize = 1;
-const STATUS_INTERVAL_MS: u32 = 250;
+const STATUS_INTERVAL_MS: u32 = 1000;
 /// Resource id of the icon embedded by `build.rs`.
 const ICON_RESOURCE: u16 = 1;
 
@@ -179,6 +179,12 @@ impl Main {
         });
 
         let me = self.clone();
+        self.wnd.on().wm_show_window(move |p| {
+            me.on_show_window(p.being_shown);
+            Ok(())
+        });
+
+        let me = self.clone();
         self.wnd.on().wm_timer(STATUS_TIMER, move || {
             me.refresh();
             Ok(())
@@ -240,10 +246,6 @@ impl Main {
         self.status.on_create();
         self.settings.on_create();
         self.logs.on_create();
-        let _ = self
-            .wnd
-            .hwnd()
-            .SetTimer(STATUS_TIMER, STATUS_INTERVAL_MS, None);
         for control in self.footer.controls() {
             control.ShowWindow(co::SW::HIDE);
         }
@@ -266,6 +268,21 @@ impl Main {
             }
         }
         self.refresh();
+    }
+
+    /// The status refresh runs only while the window can be seen: Windows sends this for the
+    /// visible creation, for hiding to the tray and for every later `ShowWindow` that changes
+    /// visibility, so a window parked in the tray wakes nothing.
+    fn on_show_window(&self, being_shown: bool) {
+        if being_shown {
+            let _ = self
+                .wnd
+                .hwnd()
+                .SetTimer(STATUS_TIMER, STATUS_INTERVAL_MS, None);
+            self.refresh();
+        } else {
+            let _ = self.wnd.hwnd().KillTimer(STATUS_TIMER);
+        }
     }
 
     fn on_tray(&self, action: TrayAction) {
