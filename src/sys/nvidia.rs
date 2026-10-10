@@ -149,13 +149,9 @@ impl NvidiaError {
     /// The engine could not be reached at all, as opposed to refusing a value or failing
     /// internally; the caller may simply wait for the NVIDIA App to start.
     pub(crate) const fn is_engine_unavailable(&self) -> bool {
-        #[cfg(windows)]
-        {
-            matches!(self, Self::Unreachable(_))
-        }
-        #[cfg(not(windows))]
-        {
-            matches!(self, Self::Unsupported)
+        std::cfg_select! {
+            windows => { matches!(self, Self::Unreachable(_)) }
+            _ => { matches!(self, Self::Unsupported) }
         }
     }
 
