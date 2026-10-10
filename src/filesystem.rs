@@ -59,6 +59,7 @@ mod tests {
     use crate::config::Config;
     use crate::sys::nvidia::RawValue;
     use crate::{sys::helper::HelperError, telemetry::Sample};
+    use std::assert_matches;
     use std::io::Cursor;
 
     fn redirect(config: &Config) -> Redirect {
@@ -173,10 +174,10 @@ mod tests {
             Ok(()),
         );
 
-        assert!(matches!(
+        assert_matches!(
             result.unwrap_err().downcast_ref::<HelperError>(),
             Some(HelperError::ForcedTermination)
-        ));
+        );
         assert_eq!(
             serde_json::from_slice::<Sample>(&output)
                 .unwrap()

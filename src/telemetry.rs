@@ -94,6 +94,7 @@ impl Meter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn sample(bytes: u64) -> Sample {
         Sample {
@@ -114,26 +115,26 @@ mod tests {
         assert_eq!(meter.observe(&sample(900), now).unwrap(), 8_900);
         assert!(meter.active(now));
         assert!(!meter.active(now + Duration::from_secs(3)));
-        assert!(matches!(
+        assert_matches!(
             meter.observe(&sample(1), now),
             Err(TelemetryError::CounterReset)
-        ));
+        );
     }
 
     #[test]
     fn unsupported_protocol_and_overflow_are_errors() {
         let mut meter = Meter::new(u64::MAX);
-        assert!(matches!(
+        assert_matches!(
             meter.observe(&sample(1), Instant::now()),
             Err(TelemetryError::Overflow)
-        ));
+        );
 
         let mut wrong = sample(0);
         wrong.version = 2;
-        assert!(matches!(
+        assert_matches!(
             meter.observe(&wrong, Instant::now()),
             Err(TelemetryError::Version(2))
-        ));
+        );
     }
 
     #[test]
@@ -155,15 +156,12 @@ mod tests {
             b"{\"version\":1}\n".as_slice(),
             b"{\"version\":1\n".as_slice(),
         ] {
-            assert!(matches!(decode_sample(frame), Err(TelemetryError::Json(_))));
+            assert_matches!(decode_sample(frame), Err(TelemetryError::Json(_)));
         }
 
         let complete_json = serde_json::to_vec(&sample(0)).unwrap();
 
-        assert!(matches!(
-            decode_sample(&complete_json),
-            Err(TelemetryError::Frame)
-        ));
+        assert_matches!(decode_sample(&complete_json), Err(TelemetryError::Frame));
     }
 
     #[test]
@@ -172,7 +170,7 @@ mod tests {
         frame.resize(MAX_TELEMETRY_FRAME_BYTES, b' ');
         frame.push(b'\n');
 
-        assert!(matches!(decode_sample(&frame), Err(TelemetryError::Frame)));
+        assert_matches!(decode_sample(&frame), Err(TelemetryError::Frame));
     }
 
     #[test]
@@ -182,9 +180,9 @@ mod tests {
         let mut frame = serde_json::to_vec(&unsupported).unwrap();
         frame.push(b'\n');
 
-        assert!(matches!(
+        assert_matches!(
             decode_sample(&frame),
             Err(TelemetryError::Version(version)) if version == unsupported.version
-        ));
+        );
     }
 }

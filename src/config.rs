@@ -150,6 +150,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn migrates_legacy_settings_without_accepting_unknown_ones() {
@@ -255,8 +256,8 @@ mod tests {
         assert!(config.validate().is_ok());
 
         config.memory_limit_mb = 0;
-        assert!(matches!(config.validate(), Err(ConfigError::Memory)));
+        assert_matches!(config.validate(), Err(ConfigError::Memory));
         config.memory_limit_mb = MAX_MEMORY_LIMIT_MB + 1;
-        assert!(matches!(config.validate(), Err(ConfigError::Memory)));
+        assert_matches!(config.validate(), Err(ConfigError::Memory));
     }
 }

@@ -32,6 +32,7 @@ pub(crate) enum StorageError {
     NoDirectory,
 }
 
+#[derive(Debug)]
 pub(crate) struct Store {
     root: PathBuf,
     lock: File,
@@ -151,16 +152,17 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn state_round_trips_and_lock_excludes_second_instance() {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::at(directory.path().to_owned()).unwrap();
 
-        assert!(matches!(
+        assert_matches!(
             Store::at(directory.path().to_owned()),
             Err(StorageError::Locked)
-        ));
+        );
         assert_eq!(store.lifetime().unwrap(), 0);
 
         store.save_lifetime(123).unwrap();
@@ -182,7 +184,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::at(directory.path().to_owned()).unwrap();
         fs::write(directory.path().join("lifetime.json"), b"broken").unwrap();
-        assert!(matches!(store.lifetime(), Err(StorageError::Json(_))));
+        assert_matches!(store.lifetime(), Err(StorageError::Json(_)));
     }
 
     #[test]
@@ -190,10 +192,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let store = Store::at(directory.path().to_owned()).unwrap();
 
-        assert!(matches!(
+        assert_matches!(
             store.write("large.json", &"x".repeat(65_537)),
             Err(StorageError::Oversized)
-        ));
+        );
         assert!(!directory.path().join("large.json").exists());
     }
 }
