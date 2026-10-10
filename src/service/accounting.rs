@@ -5,9 +5,9 @@ use crate::{
 use anyhow::{Context, Result};
 use std::time::{Duration, Instant};
 
-const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(10);
+const CHECKPOINT_INTERVAL: Duration = Duration::from_secs(60);
 const CHECKPOINT_WARNING: &str =
-    "Lifetime counter could not be saved; RAM recording continues. Retrying in 10 seconds";
+    "Lifetime counter could not be saved; RAM recording continues. Retrying in a minute";
 const SAVE_LIFETIME_CONTEXT: &str =
     "save lifetime write counter; check application state directory access and retry";
 

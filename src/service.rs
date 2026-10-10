@@ -986,26 +986,26 @@ mod tests {
         accounting.observe(&mut meter, &sample(100), now).unwrap();
         std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
 
-        accounting.checkpoint(&store, now + Duration::from_secs(10));
+        accounting.checkpoint(&store, now + Duration::from_secs(60));
 
         assert_eq!(accounting.total, 100);
         assert!(accounting.warning.is_some());
         assert!(accounting.dirty);
 
         accounting
-            .observe(&mut meter, &sample(100), now + Duration::from_secs(10))
+            .observe(&mut meter, &sample(100), now + Duration::from_secs(60))
             .unwrap();
         assert!(accounting.dirty);
 
         std::fs::remove_dir(directory.path().join("lifetime.pending")).unwrap();
         accounting
-            .observe(&mut meter, &sample(150), now + Duration::from_secs(11))
+            .observe(&mut meter, &sample(150), now + Duration::from_secs(61))
             .unwrap();
-        accounting.checkpoint(&store, now + Duration::from_secs(11));
+        accounting.checkpoint(&store, now + Duration::from_secs(61));
 
         assert_eq!(store.lifetime().unwrap(), 0);
 
-        accounting.checkpoint(&store, now + Duration::from_secs(20));
+        accounting.checkpoint(&store, now + Duration::from_secs(120));
 
         assert_eq!(store.lifetime().unwrap(), 150);
         assert!(accounting.warning.is_none());
@@ -1026,22 +1026,22 @@ mod tests {
         // A write would fail; an unchanged counter should never attempt one.
         std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
         accounting.observe(&mut meter, &sample(0), now).unwrap();
-        accounting.checkpoint(&store, now + Duration::from_secs(10));
+        accounting.checkpoint(&store, now + Duration::from_secs(60));
         assert!(accounting.warning.is_none());
         assert_eq!(store.lifetime().unwrap(), 100);
 
         std::fs::remove_dir(directory.path().join("lifetime.pending")).unwrap();
         accounting
-            .observe(&mut meter, &sample(25), now + Duration::from_secs(11))
+            .observe(&mut meter, &sample(25), now + Duration::from_secs(61))
             .unwrap();
-        accounting.checkpoint(&store, now + Duration::from_secs(20));
+        accounting.checkpoint(&store, now + Duration::from_secs(120));
         assert_eq!(store.lifetime().unwrap(), 125);
 
         std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
         accounting
-            .observe(&mut meter, &sample(25), now + Duration::from_secs(21))
+            .observe(&mut meter, &sample(25), now + Duration::from_secs(121))
             .unwrap();
-        accounting.checkpoint(&store, now + Duration::from_secs(30));
+        accounting.checkpoint(&store, now + Duration::from_secs(180));
         assert!(accounting.warning.is_none());
         assert_eq!(store.lifetime().unwrap(), 125);
     }
@@ -1223,7 +1223,7 @@ mod tests {
         let mut state = State::default();
         state
             .accounting
-            .begin_session(now.checked_sub(Duration::from_secs(10)).unwrap());
+            .begin_session(now.checked_sub(Duration::from_secs(60)).unwrap());
         state
             .accounting
             .observe(&mut session.meter, &first_sample, now)
