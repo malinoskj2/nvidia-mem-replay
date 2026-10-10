@@ -14,7 +14,7 @@ You need **64-bit Windows**, an **NVIDIA GPU**, and **Instant Replay** working i
 1. Run **`nvidia-mem-replay-setup-x64.exe`** from the Windows download. WinFsp is included; Windows may ask for admin access or a reboot. The last page offers to launch the app right away.
 2. Open the NVIDIA overlay with **Alt+Z**. In **Settings → Files and disk space**, set **Temporary files** to a folder if you haven’t already.
 3. Keep **Gallery** on your SSD or hard drive. This is where your saved clips belong.
-4. Launch **nvidia-mem-replay** from the Start menu while the NVIDIA App (or GeForce Experience) is running. The app switches NVIDIA's temporary-files location to RAM storage through NVIDIA's own ShadowPlay interface, the same way the overlay does. The RAM volume is invisible: it has no drive letter and does not appear in Explorer, This PC or file dialogs. To change the RAM limit, set it in **Settings**, then click **Apply and restart**. The default limit is **8192 MB**; leave enough RAM for your game and Windows.
+4. Launch **nvidia-mem-replay** from the Start menu while the NVIDIA App (or GeForce Experience) is running. The app switches NVIDIA's temporary-files location to RAM storage. The RAM volume is invisible: it has no drive letter and does not appear in Explorer, This PC or file dialogs. To change the RAM limit, set it in **Settings**, then click **Apply and restart**. The default limit is **8192 MB**; leave enough RAM for your game and Windows.
 5. Save clips as usual. If Instant Replay is recording, the app switches it off and on for you (by pressing its own Alt+Z hotkey) so it records into the new location; if that is not possible, the window says so and you can toggle it in **Alt+Z** yourself.
 
 ## While you play
