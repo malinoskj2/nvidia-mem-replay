@@ -1,7 +1,10 @@
 //! The per-user "Start with Windows" entry in the registry `Run` key.
 
 use crate::APP_NAME;
-use std::io;
+use std::{
+    ffi::{OsStr, OsString},
+    io,
+};
 use winreg::{
     RegKey,
     enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE},
@@ -25,7 +28,7 @@ pub(crate) fn set(enabled: bool) -> io::Result<()> {
         RegKey::predef(HKEY_CURRENT_USER).open_subkey_with_flags(RUN_KEY, KEY_READ | KEY_WRITE)?;
     if enabled {
         let executable = std::env::current_exe()?;
-        key.set_value(APP_NAME, &command(&executable.to_string_lossy()))
+        key.set_value(APP_NAME, &command(executable.as_os_str()))
     } else {
         match key.delete_value(APP_NAME) {
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -34,8 +37,12 @@ pub(crate) fn set(enabled: bool) -> io::Result<()> {
     }
 }
 
-fn command(executable: &str) -> String {
-    format!("\"{executable}\" {TRAY_FLAG}")
+fn command(executable: &OsStr) -> OsString {
+    let mut command = OsString::from("\"");
+    command.push(executable);
+    command.push("\" ");
+    command.push(TRAY_FLAG);
+    command
 }
 
 #[cfg(test)]
@@ -45,7 +52,9 @@ mod tests {
     #[test]
     fn startup_command_quotes_the_path_and_starts_in_the_tray() {
         assert_eq!(
-            command(r"C:\Program Files\nvidia-mem-replay\nvidia-mem-replay.exe"),
+            command(OsStr::new(
+                r"C:\Program Files\nvidia-mem-replay\nvidia-mem-replay.exe"
+            )),
             r#""C:\Program Files\nvidia-mem-replay\nvidia-mem-replay.exe" --tray"#
         );
     }
