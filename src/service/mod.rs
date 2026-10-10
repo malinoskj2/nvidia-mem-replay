@@ -347,6 +347,15 @@ pub(super) fn log_replay(outcome: &Result<replay::Outcome, String>) {
 }
 
 fn retry_start_when_due(store: &Store, state: &mut State) {
+    retry_start_with(store, state, start);
+}
+
+/// Tries `start` again once the retry time has come and no session exists.
+fn retry_start_with(
+    store: &Store,
+    state: &mut State,
+    start: impl FnOnce(&Store, &Config, &mut State) -> Result<()>,
+) {
     if state.session.is_some() || state.retry.is_none_or(|retry| Instant::now() < retry) {
         return;
     }
@@ -366,6 +375,22 @@ fn retry_start_when_due(store: &Store, state: &mut State) {
 /// The overlay re-pushes its own stored location whenever it restarts, which would leave
 /// NVIDIA recording to disk while the RAM drive is mounted; put the redirection back.
 fn keep_redirected(state: &mut State) {
+    keep_redirected_with(
+        state,
+        &mut replay::overlay(),
+        nvidia::redirected,
+        nvidia::apply,
+    );
+}
+
+/// Every `REDIRECTION_CHECK_INTERVAL`, asks `redirected` whether the engine still records to
+/// RAM and runs `apply` (around an Instant Replay cycle on `controls`) when it does not.
+fn keep_redirected_with(
+    state: &mut State,
+    controls: &mut impl replay::Controls,
+    redirected: impl FnOnce(&Redirect) -> Result<bool, nvidia::NvidiaError>,
+    apply: impl FnOnce(&Redirect) -> Result<(), nvidia::NvidiaError>,
+) {
     let Some(session) = &state.session else {
         return;
     };
@@ -379,14 +404,14 @@ fn keep_redirected(state: &mut State) {
     state.redirection_checked = Some(Instant::now());
 
     // An unreachable engine is left alone; a value that changed is restored.
-    if !matches!(nvidia::redirected(&session.redirect), Ok(false)) {
+    if !matches!(redirected(&session.redirect), Ok(false)) {
         return;
     }
     log::warning(
         "NVIDIA switched its temporary files back to the original location (its overlay restarted); redirecting them to RAM again",
     );
     let redirect = session.redirect.clone();
-    let (applied, replayed) = replay::around(&mut replay::overlay(), || nvidia::apply(&redirect));
+    let (applied, replayed) = replay::around(controls, || apply(&redirect));
     state.notice = Some(match (applied, replayed) {
         (Err(error), _) => {
             let notice = text::redirect_again_failed(&format!("{error:#}"));
