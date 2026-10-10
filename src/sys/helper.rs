@@ -352,6 +352,7 @@ impl Drop for Helper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[cfg(unix)]
     const SAMPLE: &str = r#"{"version":1,"written_bytes":17,"buffer_bytes":0,"resident_bytes":0,"available_bytes":200}"#;
@@ -397,7 +398,7 @@ mod tests {
 
         let error = ensure_mount_point_free(&mount).unwrap_err();
 
-        assert!(matches!(error, HelperError::Occupied(ref occupied) if *occupied == mount));
+        assert_matches!(error, HelperError::Occupied(ref occupied) if *occupied == mount);
         assert!(error.to_string().contains("already in use"));
         assert!(directory.path().join("ram").is_dir());
     }
@@ -422,10 +423,10 @@ mod tests {
         assert!(created.success());
         let mount = junction.display().to_string();
 
-        assert!(matches!(
+        assert_matches!(
             ensure_mount_point_free(&mount),
             Err(HelperError::Occupied(_))
-        ));
+        );
 
         std::fs::remove_dir(&target).unwrap();
         assert!(std::fs::symlink_metadata(&junction).is_ok());
@@ -480,10 +481,10 @@ mod tests {
 
         assert!(stopped.exited);
         assert_eq!(stopped.sample.unwrap().written_bytes, 17);
-        assert!(matches!(
+        assert_matches!(
             stopped.result,
             Err(HelperError::Telemetry(error)) if matches!(*error, TelemetryError::Json(_))
-        ));
+        );
     }
 
     #[cfg(unix)]
@@ -497,10 +498,10 @@ mod tests {
         let stopped = helper.stop();
 
         assert_eq!(stopped.sample.unwrap().version, 1);
-        assert!(matches!(
+        assert_matches!(
             stopped.result,
             Err(HelperError::Telemetry(error)) if matches!(*error, TelemetryError::Version(2))
-        ));
+        );
     }
 
     #[cfg(unix)]
@@ -515,10 +516,7 @@ mod tests {
         let stopped = helper.stop();
 
         assert!(stopped.exited);
-        assert!(matches!(
-            stopped.result,
-            Err(HelperError::ForcedTermination)
-        ));
+        assert_matches!(stopped.result, Err(HelperError::ForcedTermination));
         assert_eq!(stopped.sample.unwrap().written_bytes, 17);
         assert!(helper.reader.is_none());
         assert!(helper.child.try_wait().unwrap().is_some());
@@ -536,10 +534,7 @@ mod tests {
             assert!(Instant::now() < deadline);
             thread::sleep(Duration::from_millis(10));
         }
-        assert!(matches!(
-            helper.stop().result,
-            Err(HelperError::Telemetry(_))
-        ));
+        assert_matches!(helper.stop().result, Err(HelperError::Telemetry(_)));
     }
 
     #[cfg(unix)]
@@ -552,7 +547,7 @@ mod tests {
         let stopped = helper.stop();
 
         assert_eq!(stopped.sample.unwrap().written_bytes, 17);
-        assert!(matches!(stopped.result, Err(HelperError::FailedExit(_))));
+        assert_matches!(stopped.result, Err(HelperError::FailedExit(_)));
     }
 
     #[cfg(unix)]
@@ -571,7 +566,7 @@ mod tests {
         assert!(error.to_string().contains("registry access denied"));
         match error {
             HelperError::Diagnostics { error, .. } => {
-                assert!(matches!(*error, HelperError::Exited(status) if status.code() == Some(42)));
+                assert_matches!(*error, HelperError::Exited(status) if status.code() == Some(42));
             }
             error => panic!("unexpected helper error: {error}"),
         }
@@ -598,7 +593,7 @@ mod tests {
         assert!(error.to_string().contains("mount permission denied"));
         match error {
             HelperError::Diagnostics { error, .. } => {
-                assert!(matches!(*error, HelperError::Exited(status) if status.code() == Some(42)));
+                assert_matches!(*error, HelperError::Exited(status) if status.code() == Some(42));
             }
             error => panic!("unexpected readiness error: {error}"),
         }
