@@ -33,7 +33,7 @@ const NVIDIA_RETRY_INTERVAL: Duration = Duration::from_secs(10);
 /// How often to confirm that the engine still uses the RAM location.
 const REDIRECTION_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub(crate) enum Shutdown {
     #[default]
     Idle,
@@ -91,6 +91,7 @@ pub(crate) struct Status {
     pub(crate) shutdown: Shutdown,
 }
 
+#[derive(Debug)]
 enum Command {
     Start(Config),
     Stop,
@@ -431,6 +432,7 @@ fn keep_redirected_with(
     });
 }
 
+#[derive(Debug)]
 enum CommandOutcome {
     Poll,
     Continue,
@@ -616,7 +618,7 @@ mod tests {
     use crate::sys::helper::ShutdownReport;
     use cleanup::{finish_stop, stop_with};
     use std::{
-        cfg_select,
+        assert_matches, cfg_select,
         process::{Command as ProcessCommand, Stdio},
     };
 
@@ -639,10 +641,7 @@ mod tests {
         control.request(Command::Stop);
 
         assert!(receiver.try_recv().is_ok());
-        assert!(matches!(
-            control.mailbox.lock().unwrap().pending,
-            Some(Command::Stop)
-        ));
+        assert_matches!(control.mailbox.lock().unwrap().pending, Some(Command::Stop));
     }
 
     #[test]
@@ -652,10 +651,10 @@ mod tests {
         control.request(Command::Shutdown);
         control.request(Command::Start(Config::default()));
 
-        assert!(matches!(
+        assert_matches!(
             control.mailbox.lock().unwrap().pending,
             Some(Command::Shutdown)
-        ));
+        );
     }
 
     #[test]
@@ -672,18 +671,15 @@ mod tests {
 
         control.request(Command::Shutdown);
 
-        assert!(matches!(
+        assert_matches!(
             control.mailbox.lock().unwrap().pending,
             Some(Command::Shutdown)
-        ));
+        );
 
         control.request(Command::Exit);
         control.request(Command::Shutdown);
 
-        assert!(matches!(
-            control.mailbox.lock().unwrap().pending,
-            Some(Command::Exit)
-        ));
+        assert_matches!(control.mailbox.lock().unwrap().pending, Some(Command::Exit));
     }
 
     fn sample(bytes: u64) -> Sample {
@@ -1071,14 +1067,14 @@ mod tests {
         );
 
         assert!(!report.is_ok());
-        assert!(matches!(
+        assert_matches!(
             report
                 .helper
                 .as_ref()
                 .unwrap_err()
                 .downcast_ref::<crate::sys::helper::HelperError>(),
             Some(crate::sys::helper::HelperError::ForcedTermination)
-        ));
+        );
         assert!(report.accounting.is_ok());
         assert!(report.persistence.is_ok());
 
@@ -1115,7 +1111,7 @@ mod tests {
         );
         complete_shutdown(&mut state, &report);
 
-        assert!(state.shutdown == Shutdown::Failed);
+        assert_eq!(state.shutdown, Shutdown::Failed);
         assert!(state.error.as_ref().unwrap().contains("save lifetime"));
         assert_eq!(state.accounting.total, 42);
 
@@ -1124,7 +1120,7 @@ mod tests {
         let report = stop(&store, &mut state);
         complete_shutdown(&mut state, &report);
 
-        assert!(state.shutdown == Shutdown::Complete);
+        assert_eq!(state.shutdown, Shutdown::Complete);
         assert!(state.error.is_none());
         assert_eq!(store.lifetime().unwrap(), 42);
     }
@@ -1141,13 +1137,13 @@ mod tests {
         });
         complete_shutdown(&mut state, &failed);
 
-        assert!(state.shutdown == Shutdown::Failed);
+        assert_eq!(state.shutdown, Shutdown::Failed);
         assert!(store.redirect().unwrap().is_some());
 
         let retried = stop_with(&store, &mut state, &mut (), |_| Ok(()));
         complete_shutdown(&mut state, &retried);
 
-        assert!(state.shutdown == Shutdown::Complete);
+        assert_eq!(state.shutdown, Shutdown::Complete);
         assert!(state.error.is_none());
         assert!(store.redirect().unwrap().is_none());
         assert_eq!(state.message, DisplayStatus::Stopped);
@@ -1271,7 +1267,7 @@ mod tests {
 
         let outcome = handle_command(&store, Some(Command::Start(config)), &mut state, &output);
 
-        assert!(matches!(outcome, CommandOutcome::Continue));
+        assert_matches!(outcome, CommandOutcome::Continue);
         assert_eq!(state.message, DisplayStatus::Ready);
         assert!(state.accounting.dirty);
         assert_eq!(store.lifetime().unwrap(), 0);
@@ -1294,16 +1290,16 @@ mod tests {
 
         let outcome = handle_command(&store, Some(Command::Shutdown), &mut state, &output);
 
-        assert!(matches!(outcome, CommandOutcome::Poll));
-        assert!(output.lock().unwrap().shutdown == Shutdown::Failed);
+        assert_matches!(outcome, CommandOutcome::Poll);
+        assert_eq!(output.lock().unwrap().shutdown, Shutdown::Failed);
         assert!(state.error.as_ref().unwrap().contains("save lifetime"));
 
         std::fs::remove_dir(directory.path().join("lifetime.pending")).unwrap();
 
         let outcome = handle_command(&store, Some(Command::Shutdown), &mut state, &output);
 
-        assert!(matches!(outcome, CommandOutcome::Exit));
-        assert!(output.lock().unwrap().shutdown == Shutdown::Complete);
+        assert_matches!(outcome, CommandOutcome::Exit);
+        assert_eq!(output.lock().unwrap().shutdown, Shutdown::Complete);
         assert!(state.error.is_none());
         assert_eq!(store.lifetime().unwrap(), 42);
     }
@@ -1319,7 +1315,7 @@ mod tests {
 
         let outcome = handle_command(&store, Some(Command::Exit), &mut state, &output);
 
-        assert!(matches!(outcome, CommandOutcome::Exit));
+        assert_matches!(outcome, CommandOutcome::Exit);
         assert_eq!(store.lifetime().unwrap(), 42);
         assert_eq!(output.lock().unwrap().lifetime_bytes, 0);
 
@@ -1329,7 +1325,7 @@ mod tests {
 
         let outcome = handle_command(&store, Some(Command::Exit), &mut state, &output);
 
-        assert!(matches!(outcome, CommandOutcome::Exit));
+        assert_matches!(outcome, CommandOutcome::Exit);
         assert!(state.accounting.dirty);
         assert_eq!(store.lifetime().unwrap(), 42);
     }
