@@ -11,8 +11,8 @@ You need **64-bit Windows**, an **NVIDIA GPU**, and **Instant Replay** working i
 
 ## Get started
 
-1. Run **`nvidia-mem-replay-setup-x64.exe`** from the Windows download. WinFsp is included; Windows may ask for admin access or a reboot.
-2. Launch **nvidia-mem-replay** from the Start menu . The app switches NVIDIA's temporary-files location to RAM storage. The RAM volume is invisible: it has no drive letter and does not appear in Explorer, This PC or file dialogs. To change the RAM limit, set it in **Settings**, then click **Apply and restart**. The default limit is **8192 MB**; leave enough RAM for your game and Windows.
+1. Download **`nvidia-mem-replay-setup-x64.exe`** from the [Releases page](https://github.com/malinoskj2/nvidia-mem-replay/releases) and run it. WinFsp is included; Windows may ask for admin access or a reboot.
+2. Launch **nvidia-mem-replay** from the Start menu. The app switches NVIDIA's temporary-files location to RAM storage. The RAM volume is invisible: it has no drive letter and does not appear in Explorer, This PC or file dialogs. To change the RAM limit, set it in **Settings**, then click **Apply and restart**. The default limit is **8192 MB**; leave enough RAM for your game and Windows.
 3. Save clips as usual. Pre-save, the temporary recording is in RAM. Once saved it will persist to disk at your usual location (defined in Nvidia App).
 
 ## While you play
