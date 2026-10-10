@@ -118,7 +118,7 @@ pub(crate) fn press(chord: &Chord) -> Result<(), HotkeyError> {
     Ok(())
 }
 
-#[allow(unsafe_code)]
+#[expect(unsafe_code)]
 fn event(code: u16, flags: co::KEYEVENTF) -> HwKbMouse {
     // SAFETY: `VK` is a plain newtype over the virtual-key code; every value is representable.
     let key = unsafe { co::VK::from_raw(code) };

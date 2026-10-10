@@ -128,7 +128,7 @@ fn inside_triangle(x: f32, y: f32) -> bool {
     sides.iter().all(|value| *value >= 0.0) || sides.iter().all(|value| *value <= 0.0)
 }
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn to_byte(value: f32) -> u8 {
     // Clamped to 0..=255 first, so the cast neither truncates nor loses a sign.
     value.round().clamp(0.0, 255.0) as u8
