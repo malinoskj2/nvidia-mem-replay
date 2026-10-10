@@ -2,20 +2,18 @@
 
 ![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4)
 ![NVIDIA Instant Replay](https://img.shields.io/badge/NVIDIA-Instant_Replay-76B900)
-[![GPL-3.0 license](https://img.shields.io/badge/license-GPL--3.0-555555)](LICENSE)
+![GPL-3.0 license](https://img.shields.io/badge/license-GPL--3.0-555555)
 
-**Use RAM for NVIDIA Instant Replay’s temporary recordings.**
+**Use RAM for NVIDIA Instant Replay’s temporary recordings.**  
 Your saved clips still go to your usual Gallery folder.
 
 You need **64-bit Windows**, an **NVIDIA GPU**, and **Instant Replay** working in the NVIDIA overlay.
 
 ## Get started
 
-1. Run **`nvidia-mem-replay-setup-x64.exe`** from the Windows download. WinFsp is included; Windows may ask for admin access or a reboot. The last page offers to launch the app right away.
-2. Open the NVIDIA overlay with **Alt+Z**. In **Settings → Files and disk space**, set **Temporary files** to a folder if you haven’t already.
-3. Keep **Gallery** on your SSD or hard drive. This is where your saved clips belong.
-4. Launch **nvidia-mem-replay** from the Start menu while the NVIDIA App (or GeForce Experience) is running. The app switches NVIDIA's temporary-files location to RAM storage. The RAM volume is invisible: it has no drive letter and does not appear in Explorer, This PC or file dialogs. To change the RAM limit, set it in **Settings**, then click **Apply and restart**. The default limit is **8192 MB**; leave enough RAM for your game and Windows.
-5. Save clips as usual. If Instant Replay is recording, the app switches it off and on for you (by pressing its own Alt+Z hotkey) so it records into the new location; if that is not possible, the window says so and you can toggle it in **Alt+Z** yourself.
+1. Run **`nvidia-mem-replay-setup-x64.exe`** from the Windows download. WinFsp is included; Windows may ask for admin access or a reboot.
+2. Launch **nvidia-mem-replay** from the Start menu . The app switches NVIDIA's temporary-files location to RAM storage. The RAM volume is invisible: it has no drive letter and does not appear in Explorer, This PC or file dialogs. To change the RAM limit, set it in **Settings**, then click **Apply and restart**. The default limit is **8192 MB**; leave enough RAM for your game and Windows.
+3. Save clips as usual. Pre-save, the temporary recording is in RAM. Once saved it will persist to disk at your usual location (defined in Nvidia App).
 
 ## While you play
 
@@ -40,5 +38,5 @@ Windows can still page RAM to disk, so this does not guarantee zero disk writes.
 
 Built on the work of these projects and their contributors:
 
-- **[WinFsp](https://github.com/winfsp/winfsp)** — the Windows filesystem driver that makes the RAM drive possible.
-- **[WinFsp-MemFs-Extended](https://github.com/Ceiridge/WinFsp-MemFs-Extended)** by **Ceiridge** — the dynamically allocated RAM filesystem behind this app.
+- [**WinFsp**](https://github.com/winfsp/winfsp) — the Windows filesystem driver that makes the RAM drive possible.
+- [**WinFsp-MemFs-Extended**](https://github.com/Ceiridge/WinFsp-MemFs-Extended) by **Ceiridge** — the dynamically allocated RAM filesystem behind this app.
