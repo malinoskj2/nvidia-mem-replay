@@ -202,6 +202,8 @@ struct Session {
     redirect: Redirect,
     meter: Meter,
     sample: Option<Sample>,
+    /// The number of the last frame observed; 0 before the first.
+    frame: u64,
     stopping: bool,
 }
 
@@ -585,6 +587,7 @@ fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {
         redirect,
         meter: Meter::new(state.accounting.total),
         sample: None,
+        frame: 0,
         stopping: false,
     });
 
@@ -597,13 +600,12 @@ fn poll(
     accounting: &mut Accounting,
     message: &mut DisplayStatus,
 ) -> Result<()> {
-    // The helper repeats its latest frame until the next one arrives; observing a repeat would
-    // read as the writes it reported having stopped.
-    if let Some(sample) = session.helper.sample()?
-        && session.sample.as_ref() != Some(&sample)
+    if let Some(frame) = session.helper.frame()?
+        && frame.number != session.frame
     {
-        accounting.observe(&mut session.meter, &sample)?;
-        session.sample = Some(sample);
+        accounting.observe(&mut session.meter, &frame.sample)?;
+        session.frame = frame.number;
+        session.sample = Some(frame.sample);
     }
 
     *message = if session.meter.active() {
@@ -734,6 +736,7 @@ mod tests {
             redirect: redirect(),
             meter: Meter::new(0),
             sample: None,
+            frame: 0,
             stopping: false,
         }
     }
@@ -1213,6 +1216,7 @@ mod tests {
             redirect: redirect(),
             meter: Meter::new(100),
             sample: None,
+            frame: 0,
             stopping: false,
         };
         let mut state = State::default();

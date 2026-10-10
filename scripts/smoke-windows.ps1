@@ -32,8 +32,8 @@ $info.RedirectStandardInput = $true
 $info.RedirectStandardOutput = $true
 $process = [System.Diagnostics.Process]::Start($info)
 
-# The supervisor forwards a frame only when it changed, and a change takes up to 20 seconds to
-# arrive: the filesystem reports every 10 seconds and the supervisor polls every 10 seconds.
+# The filesystem reports every 10 seconds and the supervisor forwards each frame once on its own
+# 10-second cadence, so a frame can take up to 20 seconds to arrive.
 function Read-Sample {
     $task = $process.StandardOutput.ReadLineAsync()
     if (!$task.Wait(25000)) { throw 'Helper telemetry timed out.' }

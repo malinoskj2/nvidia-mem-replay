@@ -67,8 +67,16 @@ pub(crate) enum HelperError {
 
 #[derive(Default)]
 struct Inbox {
-    latest: Option<(Sample, Instant)>,
+    latest: Option<(Frame, Instant)>,
     error: Option<Arc<TelemetryError>>,
+}
+
+/// A telemetry sample with its arrival number, so a reader that sees the same latest frame
+/// twice can tell a repeat from a new frame with identical contents.
+#[derive(Clone, Debug)]
+pub(crate) struct Frame {
+    pub(crate) number: u64,
+    pub(crate) sample: Sample,
 }
 
 pub(crate) struct ShutdownReport {
@@ -127,7 +135,13 @@ fn read_telemetry(stdout: ChildStdout, output: &Mutex<Inbox>) {
 
         let Ok(mut inbox) = output.lock() else { break };
         match parsed {
-            Ok(sample) => inbox.latest = Some((sample, Instant::now())),
+            Ok(sample) => {
+                let number = inbox
+                    .latest
+                    .as_ref()
+                    .map_or(1, |(frame, _)| frame.number + 1);
+                inbox.latest = Some((Frame { number, sample }, Instant::now()));
+            }
             Err(error) => {
                 inbox.error = Some(Arc::new(error));
                 break;
@@ -247,6 +261,11 @@ impl Helper {
     }
 
     pub(crate) fn sample(&mut self) -> Result<Option<Sample>, HelperError> {
+        Ok(self.frame()?.map(|frame| frame.sample))
+    }
+
+    /// The latest frame, which stays the same until the helper publishes the next one.
+    pub(crate) fn frame(&mut self) -> Result<Option<Frame>, HelperError> {
         if let Some(status) = self.child.try_wait()? {
             self.join_readers()?;
             return Err(self.diagnostics.attach(HelperError::Exited(status)));
@@ -258,14 +277,14 @@ impl Helper {
                 .diagnostics
                 .attach(HelperError::Telemetry(Arc::clone(error))));
         }
-        let Some((sample, observed)) = &inbox.latest else {
+        let Some((frame, observed)) = &inbox.latest else {
             return Ok(None);
         };
         if observed.elapsed() > TELEMETRY_TIMEOUT {
             return Err(self.diagnostics.attach(HelperError::TelemetryStale));
         }
 
-        Ok(Some(sample.clone()))
+        Ok(Some(frame.clone()))
     }
 
     pub(crate) fn stop(&mut self) -> ShutdownReport {
@@ -273,7 +292,7 @@ impl Helper {
         let exited = matches!(self.child.try_wait(), Ok(Some(_)));
         let (sample, telemetry_result) = match self.inbox.lock() {
             Ok(inbox) => {
-                let sample = inbox.latest.as_ref().map(|(sample, _)| sample.clone());
+                let sample = inbox.latest.as_ref().map(|(frame, _)| frame.sample.clone());
                 let result = match &inbox.error {
                     Some(error) => Err(HelperError::Telemetry(error.clone())),
                     None => Ok(()),

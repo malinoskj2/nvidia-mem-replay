@@ -115,15 +115,15 @@ fn run(volume: &Volume) -> Result<()> {
 
     let mut stdout = io::stdout().lock();
     let reporting = (|| -> Result<()> {
-        let mut forwarded = None;
+        let mut forwarded = 0;
         loop {
-            if let Some(sample) = filesystem.sample()?
-                && forwarded.as_ref() != Some(&sample)
+            if let Some(frame) = filesystem.frame()?
+                && frame.number != forwarded
             {
-                serde_json::to_writer(&mut stdout, &sample)?;
+                serde_json::to_writer(&mut stdout, &frame.sample)?;
                 stdout.write_all(b"\n")?;
                 stdout.flush()?;
-                forwarded = Some(sample);
+                forwarded = frame.number;
             }
 
             if !matches!(
