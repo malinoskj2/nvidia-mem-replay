@@ -26,7 +26,7 @@ mod text;
 use accounting::Accounting;
 use cleanup::{complete_shutdown, stop};
 
-const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const WORKER_POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// How often to try again while NVIDIA's `ShadowPlay` engine is not reachable (for example
 /// when this app starts at logon before the NVIDIA App has finished starting).
 const NVIDIA_RETRY_INTERVAL: Duration = Duration::from_secs(10);
@@ -64,8 +64,8 @@ impl DisplayStatus {
             Self::StartFailed => "Could not start RAM storage",
             Self::WaitingForNvidia => "Waiting for the NVIDIA App to start…",
             Self::Waiting => "RAM ready · waiting for Instant Replay writes",
-            Self::Writing => "Data is being written to RAM",
-            Self::Ready => "RAM ready · no writes in the last 2 seconds",
+            Self::Writing => "Writing to RAM",
+            Self::Ready => "RAM ready · no recent writes",
             Self::Stopping => "Stopping RAM storage…",
             Self::Stopped => "Stopped · temporary location restored",
             Self::CleanupFailed => "Stopped · cleanup needs attention",
@@ -227,7 +227,7 @@ impl State {
         let active = self
             .session
             .as_ref()
-            .is_some_and(|session| !session.stopping && session.meter.active(Instant::now()));
+            .is_some_and(|session| !session.stopping && session.meter.active());
 
         Status {
             message: self.message,
@@ -597,18 +597,21 @@ fn poll(
     accounting: &mut Accounting,
     message: &mut DisplayStatus,
 ) -> Result<()> {
-    let now = Instant::now();
-    if let Some(sample) = session.helper.sample()? {
-        accounting.observe(&mut session.meter, &sample, now)?;
+    // The helper repeats its latest frame until the next one arrives; observing a repeat would
+    // read as the writes it reported having stopped.
+    if let Some(sample) = session.helper.sample()?
+        && session.sample.as_ref() != Some(&sample)
+    {
+        accounting.observe(&mut session.meter, &sample)?;
         session.sample = Some(sample);
     }
 
-    *message = if session.meter.active(now) {
+    *message = if session.meter.active() {
         DisplayStatus::Writing
     } else {
         DisplayStatus::Ready
     };
-    accounting.checkpoint(store, now);
+    accounting.checkpoint(store, Instant::now());
     Ok(())
 }
 
@@ -983,7 +986,7 @@ mod tests {
         let mut accounting = Accounting::default();
         accounting.begin_session(now);
         let mut meter = Meter::new(0);
-        accounting.observe(&mut meter, &sample(100), now).unwrap();
+        accounting.observe(&mut meter, &sample(100)).unwrap();
         std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
 
         accounting.checkpoint(&store, now + Duration::from_secs(60));
@@ -992,15 +995,11 @@ mod tests {
         assert!(accounting.warning.is_some());
         assert!(accounting.dirty);
 
-        accounting
-            .observe(&mut meter, &sample(100), now + Duration::from_secs(60))
-            .unwrap();
+        accounting.observe(&mut meter, &sample(100)).unwrap();
         assert!(accounting.dirty);
 
         std::fs::remove_dir(directory.path().join("lifetime.pending")).unwrap();
-        accounting
-            .observe(&mut meter, &sample(150), now + Duration::from_secs(61))
-            .unwrap();
+        accounting.observe(&mut meter, &sample(150)).unwrap();
         accounting.checkpoint(&store, now + Duration::from_secs(61));
 
         assert_eq!(store.lifetime().unwrap(), 0);
@@ -1025,22 +1024,18 @@ mod tests {
 
         // A write would fail; an unchanged counter should never attempt one.
         std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
-        accounting.observe(&mut meter, &sample(0), now).unwrap();
+        accounting.observe(&mut meter, &sample(0)).unwrap();
         accounting.checkpoint(&store, now + Duration::from_secs(60));
         assert!(accounting.warning.is_none());
         assert_eq!(store.lifetime().unwrap(), 100);
 
         std::fs::remove_dir(directory.path().join("lifetime.pending")).unwrap();
-        accounting
-            .observe(&mut meter, &sample(25), now + Duration::from_secs(61))
-            .unwrap();
+        accounting.observe(&mut meter, &sample(25)).unwrap();
         accounting.checkpoint(&store, now + Duration::from_secs(120));
         assert_eq!(store.lifetime().unwrap(), 125);
 
         std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
-        accounting
-            .observe(&mut meter, &sample(25), now + Duration::from_secs(121))
-            .unwrap();
+        accounting.observe(&mut meter, &sample(25)).unwrap();
         accounting.checkpoint(&store, now + Duration::from_secs(180));
         assert!(accounting.warning.is_none());
         assert_eq!(store.lifetime().unwrap(), 125);
@@ -1226,7 +1221,7 @@ mod tests {
             .begin_session(now.checked_sub(Duration::from_secs(60)).unwrap());
         state
             .accounting
-            .observe(&mut session.meter, &first_sample, now)
+            .observe(&mut session.meter, &first_sample)
             .unwrap();
         state.session = Some(session);
 

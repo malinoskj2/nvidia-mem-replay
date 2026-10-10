@@ -8,7 +8,6 @@ use crate::{
     telemetry::Meter,
 };
 use anyhow::{Context, Result};
-use std::time::Instant;
 
 /// Each result retains its source error until the worker reports it to the GUI.
 pub(super) struct CleanupReport {
@@ -127,7 +126,7 @@ pub(super) fn finish_stop(
     let accounting = if let Some(sample) = &stopped.sample {
         state
             .accounting
-            .observe(meter, sample, Instant::now())
+            .observe(meter, sample)
             .context("account final RAM writes")
     } else {
         Ok(())

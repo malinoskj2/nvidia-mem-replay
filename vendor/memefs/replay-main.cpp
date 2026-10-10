@@ -7,6 +7,8 @@
 #include <cerrno>
 #include <cwctype>
 
+static const DWORD REPORT_INTERVAL_MS = 10000;
+
 static DWORD WINAPI WaitForOwner(void*) {
     char command[512];
     DWORD read;
@@ -89,7 +91,7 @@ int wmain(int argc, wchar_t** argv) {
         do {
             reported = Report(filesystem);
         } while (reported && !filesystem.unexpectedStop.load(std::memory_order_acquire) &&
-            WaitForSingleObject(owner, 250) == WAIT_TIMEOUT);
+            WaitForSingleObject(owner, REPORT_INTERVAL_MS) == WAIT_TIMEOUT);
 
         filesystem.Stop();
         // Dispatch is drained: the final counter includes all completed writes.

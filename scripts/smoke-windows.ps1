@@ -32,9 +32,11 @@ $info.RedirectStandardInput = $true
 $info.RedirectStandardOutput = $true
 $process = [System.Diagnostics.Process]::Start($info)
 
+# The supervisor forwards a frame only when it changed, and a change takes up to 20 seconds to
+# arrive: the filesystem reports every 10 seconds and the supervisor polls every 10 seconds.
 function Read-Sample {
     $task = $process.StandardOutput.ReadLineAsync()
-    if (!$task.Wait(5000)) { throw 'Helper telemetry timed out.' }
+    if (!$task.Wait(25000)) { throw 'Helper telemetry timed out.' }
     if (!$task.Result) { throw 'Helper exited without telemetry.' }
 
     return ($task.Result | ConvertFrom-Json)
@@ -69,13 +71,13 @@ try {
         $stream.Flush($true)
     } finally { $stream.Dispose() }
 
-    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do { $sample = Read-Sample } while ($sample.written_bytes -lt 2000000 -and [DateTime]::UtcNow -lt $deadline)
     if ($sample.written_bytes -ne 2000000) { throw "Overwrite accounting failed: $($sample.written_bytes)" }
 
     Remove-Item $file
     $deleted = Read-Sample
-    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
     while ($deleted.buffer_bytes -ne 0 -and [DateTime]::UtcNow -lt $deadline) { $deleted = Read-Sample }
     if ($deleted.buffer_bytes -ne 0) { throw 'Deleted file memory was not released.' }
     if ($deleted.written_bytes -lt 2000000) { throw 'Deletion reduced lifetime writes.' }

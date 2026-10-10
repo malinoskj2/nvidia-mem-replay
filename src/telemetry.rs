@@ -1,16 +1,14 @@
 use serde::{Deserialize, Serialize};
-use std::{
-    io,
-    time::{Duration, Instant},
-};
+use std::{io, time::Duration};
 use thiserror::Error;
 
 pub(crate) const TELEMETRY_PROTOCOL_VERSION: u32 = 1;
 pub(crate) const MAX_TELEMETRY_FRAME_BYTES: usize = 1024;
-pub(crate) const TELEMETRY_TIMEOUT: Duration = Duration::from_secs(3);
-const WRITE_ACTIVITY_WINDOW: Duration = Duration::from_secs(2);
+/// The filesystem reports every 10 s and the supervisor forwards on its own 10 s cadence, so a
+/// frame can take about 20 s to arrive.
+pub(crate) const TELEMETRY_TIMEOUT: Duration = Duration::from_secs(45);
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Sample {
     pub(crate) version: u32,
@@ -52,7 +50,7 @@ pub(crate) enum TelemetryError {
 pub(crate) struct Meter {
     base: u64,
     last: u64,
-    activity: Option<Instant>,
+    advanced: bool,
 }
 
 impl Meter {
@@ -60,11 +58,11 @@ impl Meter {
         Self {
             base,
             last: 0,
-            activity: None,
+            advanced: false,
         }
     }
 
-    pub(crate) fn observe(&mut self, sample: &Sample, now: Instant) -> Result<u64, TelemetryError> {
+    pub(crate) fn observe(&mut self, sample: &Sample) -> Result<u64, TelemetryError> {
         if sample.version != TELEMETRY_PROTOCOL_VERSION {
             return Err(TelemetryError::Version(sample.version));
         }
@@ -77,17 +75,15 @@ impl Meter {
             .checked_add(sample.written_bytes)
             .ok_or(TelemetryError::Overflow)?;
 
-        if sample.written_bytes > self.last {
-            self.activity = Some(now);
-        }
+        self.advanced = sample.written_bytes > self.last;
         self.last = sample.written_bytes;
 
         Ok(total)
     }
 
-    pub(crate) fn active(&self, now: Instant) -> bool {
-        self.activity
-            .is_some_and(|last| now.duration_since(last) < WRITE_ACTIVITY_WINDOW)
+    /// Whether the most recently observed sample advanced the write counter.
+    pub(crate) const fn active(&self) -> bool {
+        self.advanced
     }
 }
 
@@ -107,34 +103,27 @@ mod tests {
     }
 
     #[test]
-    fn cumulative_counters_include_skipped_samples_and_track_recent_activity() {
-        let now = Instant::now();
+    fn cumulative_counters_include_skipped_samples_and_report_whether_the_latest_advanced() {
         let mut meter = Meter::new(8_000);
+        assert!(!meter.active());
 
-        assert_eq!(meter.observe(&sample(100), now).unwrap(), 8_100);
-        assert_eq!(meter.observe(&sample(900), now).unwrap(), 8_900);
-        assert!(meter.active(now));
-        assert!(!meter.active(now + Duration::from_secs(3)));
-        assert_matches!(
-            meter.observe(&sample(1), now),
-            Err(TelemetryError::CounterReset)
-        );
+        assert_eq!(meter.observe(&sample(100)).unwrap(), 8_100);
+        assert!(meter.active());
+        assert_eq!(meter.observe(&sample(900)).unwrap(), 8_900);
+        assert!(meter.active());
+        assert_eq!(meter.observe(&sample(900)).unwrap(), 8_900);
+        assert!(!meter.active());
+        assert_matches!(meter.observe(&sample(1)), Err(TelemetryError::CounterReset));
     }
 
     #[test]
     fn unsupported_protocol_and_overflow_are_errors() {
         let mut meter = Meter::new(u64::MAX);
-        assert_matches!(
-            meter.observe(&sample(1), Instant::now()),
-            Err(TelemetryError::Overflow)
-        );
+        assert_matches!(meter.observe(&sample(1)), Err(TelemetryError::Overflow));
 
         let mut wrong = sample(0);
         wrong.version = 2;
-        assert_matches!(
-            meter.observe(&wrong, Instant::now()),
-            Err(TelemetryError::Version(2))
-        );
+        assert_matches!(meter.observe(&wrong), Err(TelemetryError::Version(2)));
     }
 
     #[test]

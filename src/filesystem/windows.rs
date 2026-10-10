@@ -13,7 +13,7 @@ use std::{
 };
 use winsafe::{self as w, co, prelude::*};
 
-const TELEMETRY_REPORT_INTERVAL: Duration = Duration::from_millis(250);
+const TELEMETRY_REPORT_INTERVAL: Duration = Duration::from_secs(10);
 const MAX_STOP_COMMAND_BYTES: u64 = 512;
 
 #[derive(Parser)]
@@ -115,11 +115,15 @@ fn run(volume: &Volume) -> Result<()> {
 
     let mut stdout = io::stdout().lock();
     let reporting = (|| -> Result<()> {
+        let mut forwarded = None;
         loop {
-            if let Some(sample) = filesystem.sample()? {
+            if let Some(sample) = filesystem.sample()?
+                && forwarded.as_ref() != Some(&sample)
+            {
                 serde_json::to_writer(&mut stdout, &sample)?;
                 stdout.write_all(b"\n")?;
                 stdout.flush()?;
+                forwarded = Some(sample);
             }
 
             if !matches!(

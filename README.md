@@ -21,7 +21,7 @@ You need **64-bit Windows**, an **NVIDIA GPU**, and **Instant Replay** working i
 - **Close the window** to keep it running in the tray. Click the tray icon to reopen it; right-click it for **Stop and restore** and **Quit**. If the tray is unavailable, closing quits the app.
 - **Stop and restore** (Settings tab or tray menu) stops RAM recording and restores NVIDIA’s original temporary folder.
 - **Start with Windows** (Settings tab) starts the app hidden in the tray at sign-in. It waits for the NVIDIA App to come up before redirecting, so the order the two start in does not matter.
-- If the NVIDIA App or its overlay restarts while the app is running, NVIDIA resets its temporary folder; the app notices within a few seconds and redirects it to RAM again.
+- If the NVIDIA App or its overlay restarts while the app is running, NVIDIA resets its temporary folder; the app notices within about ten seconds and redirects it to RAM again.
 
 **Save any clips you want before stopping, quitting, restarting, or shutting down your PC.** The temporary RAM buffer disappears; clips already saved to Gallery stay on disk.
 

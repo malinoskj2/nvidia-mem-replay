@@ -35,13 +35,8 @@ impl Accounting {
         Ok(())
     }
 
-    pub(super) fn observe(
-        &mut self,
-        meter: &mut Meter,
-        sample: &Sample,
-        now: Instant,
-    ) -> Result<()> {
-        let total = meter.observe(sample, now)?;
+    pub(super) fn observe(&mut self, meter: &mut Meter, sample: &Sample) -> Result<()> {
+        let total = meter.observe(sample)?;
         self.dirty |= total != self.total;
         self.total = total;
         Ok(())
