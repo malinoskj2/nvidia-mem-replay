@@ -38,7 +38,7 @@ const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
 
 /// Low 16 bits: `size_of::<CreateParams>()`.
 const CREATE_PARAMS_VERSION: u32 = 0x0001_0018;
-/// The first-generation `IShadowPlayApi` table; its first eight methods are used here.
+/// The first-generation `IShadowPlayApi` table of twenty methods; slots 6, 7 and 15 are used here.
 const INTERFACE_VERSION: u32 = 0x0001_0008;
 /// Each client id joins the message bus under its own module name, and a second registration
 /// under a name already in use is dropped (its calls then time out). The library accepts 3
