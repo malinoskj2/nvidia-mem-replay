@@ -1,12 +1,10 @@
 use super::*;
 
+// The mount-point rules themselves are covered in `config::tests`; this checks the wiring.
+
 #[test]
 fn filesystem_cli_accepts_drive_letters_and_absolute_directories() {
-    for mount in [
-        "T:",
-        r"C:\Users\me\AppData\Local\NvidiaMemReplay\ram",
-        r"D:\ram",
-    ] {
+    for mount in ["T:", r"C:\Users\me\AppData\Local\NvidiaMemReplay\ram"] {
         assert!(
             Cli::try_parse_from([
                 "replay",
@@ -38,55 +36,7 @@ fn filesystem_cli_rejects_invalid_or_incomplete_configuration() {
             "replay",
             "filesystem",
             "--mount",
-            "TT:",
-            "--memory-limit-mb",
-            "256",
-        ],
-        vec![
-            "replay",
-            "filesystem",
-            "--mount",
-            "T",
-            "--memory-limit-mb",
-            "256",
-        ],
-        vec![
-            "replay",
-            "filesystem",
-            "--mount",
-            r"C:\",
-            "--memory-limit-mb",
-            "256",
-        ],
-        vec![
-            "replay",
-            "filesystem",
-            "--mount",
             r"C:\ram\",
-            "--memory-limit-mb",
-            "256",
-        ],
-        vec![
-            "replay",
-            "filesystem",
-            "--mount",
-            r"ram\here",
-            "--memory-limit-mb",
-            "256",
-        ],
-        vec![
-            "replay",
-            "filesystem",
-            "--mount",
-            r"C:\ram\..\x",
-            "--memory-limit-mb",
-            "256",
-        ],
-        vec![
-            "replay",
-            "filesystem",
-            "--mount",
-            r"\\server\share",
             "--memory-limit-mb",
             "256",
         ],

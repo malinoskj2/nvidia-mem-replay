@@ -1,8 +1,10 @@
 use super::*;
 
+#[cfg(unix)]
 const SAMPLE: &str =
     r#"{"version":1,"written_bytes":17,"buffer_bytes":0,"resident_bytes":0,"available_bytes":200}"#;
 
+#[cfg(unix)]
 fn helper(script: &str) -> Helper {
     let child = Command::new("sh")
         .args(["-c", script])
@@ -15,6 +17,7 @@ fn helper(script: &str) -> Helper {
     Helper::from_child(child).unwrap()
 }
 
+#[cfg(unix)]
 fn wait_for_sample(helper: &mut Helper) {
     let deadline = Instant::now() + Duration::from_secs(2);
     while helper.sample().unwrap().is_none() {
@@ -23,6 +26,64 @@ fn wait_for_sample(helper: &mut Helper) {
     }
 }
 
+#[test]
+fn a_missing_mount_point_is_free() {
+    let directory = tempfile::tempdir().unwrap();
+    let mount = directory.path().join("ram").display().to_string();
+
+    ensure_mount_point_free(&mount).unwrap();
+
+    assert!(!directory.path().join("ram").exists());
+}
+
+#[test]
+fn an_existing_directory_occupies_the_mount_point() {
+    let directory = tempfile::tempdir().unwrap();
+    let mount = directory.path().join("ram");
+    std::fs::create_dir(&mount).unwrap();
+    let mount = mount.display().to_string();
+
+    let error = ensure_mount_point_free(&mount).unwrap_err();
+
+    assert!(matches!(error, HelperError::Occupied(ref occupied) if *occupied == mount));
+    assert!(error.to_string().contains("already in use"));
+    assert!(directory.path().join("ram").is_dir());
+}
+
+/// A junction needs no privilege, unlike a symbolic link.
+#[cfg(windows)]
+#[test]
+fn a_dangling_junction_is_removed_and_a_live_one_occupies_the_mount_point() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    let junction = directory.path().join("ram");
+    let created = Command::new("cmd")
+        .args(["/d", "/c", "mklink", "/J"])
+        .arg(&junction)
+        .arg(&target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(created.success());
+    let mount = junction.display().to_string();
+
+    assert!(matches!(
+        ensure_mount_point_free(&mount),
+        Err(HelperError::Occupied(_))
+    ));
+
+    std::fs::remove_dir(&target).unwrap();
+    assert!(std::fs::symlink_metadata(&junction).is_ok());
+
+    ensure_mount_point_free(&mount).unwrap();
+
+    assert!(std::fs::symlink_metadata(&junction).is_err());
+}
+
+#[cfg(unix)]
 #[test]
 fn shutdown_joins_reader_and_keeps_the_final_counter() {
     let mut helper = helper(&format!(
@@ -40,6 +101,7 @@ fn shutdown_joins_reader_and_keeps_the_final_counter() {
     assert!(helper.child.try_wait().unwrap().is_some());
 }
 
+#[cfg(unix)]
 #[test]
 fn nonzero_exit_keeps_final_sample_and_reports_status() {
     let mut helper = helper(&format!("read command; printf '%s\\n' '{SAMPLE}'; exit 42"));
@@ -55,6 +117,7 @@ fn nonzero_exit_keeps_final_sample_and_reports_status() {
     assert!(helper.reader.is_none());
 }
 
+#[cfg(unix)]
 #[test]
 fn malformed_final_frame_keeps_last_sample_and_reports_failure() {
     let mut helper = helper(&format!(
@@ -71,6 +134,7 @@ fn malformed_final_frame_keeps_last_sample_and_reports_failure() {
     ));
 }
 
+#[cfg(unix)]
 #[test]
 fn unsupported_final_protocol_keeps_last_valid_sample() {
     let mut helper = helper(&format!(
@@ -87,6 +151,7 @@ fn unsupported_final_protocol_keeps_last_valid_sample() {
     ));
 }
 
+#[cfg(unix)]
 #[test]
 fn forced_shutdown_is_reported_and_keeps_the_latest_sample() {
     let mut helper = helper(&format!(
@@ -107,6 +172,7 @@ fn forced_shutdown_is_reported_and_keeps_the_latest_sample() {
     assert!(helper.child.try_wait().unwrap().is_some());
 }
 
+#[cfg(unix)]
 #[test]
 fn oversized_output_is_bounded_and_rejected() {
     let mut helper = helper("printf '%2000s' x; read command");
@@ -124,6 +190,7 @@ fn oversized_output_is_bounded_and_rejected() {
     ));
 }
 
+#[cfg(unix)]
 #[test]
 fn process_failure_takes_precedence_over_invalid_final_telemetry() {
     let mut helper = helper(&format!(
@@ -136,6 +203,7 @@ fn process_failure_takes_precedence_over_invalid_final_telemetry() {
     assert!(matches!(stopped.result, Err(HelperError::FailedExit(_))));
 }
 
+#[cfg(unix)]
 #[test]
 fn unexpected_exit_preserves_stderr_and_exit_status() {
     let mut helper = helper("printf '%s\\n' 'registry access denied' >&2; exit 42");
@@ -158,6 +226,7 @@ fn unexpected_exit_preserves_stderr_and_exit_status() {
     assert!(helper.stop().exited);
 }
 
+#[cfg(unix)]
 #[test]
 fn readiness_failure_preserves_helper_diagnostics() {
     let mut command = Command::new("sh");
@@ -170,7 +239,7 @@ fn readiness_failure_preserves_helper_diagnostics() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let error = Helper::wait_ready(command, &Config::default(), None)
+    let error = Helper::wait_ready(command, &Volume::new("T:".to_owned(), 256), None)
         .err()
         .unwrap();
 
@@ -183,6 +252,7 @@ fn readiness_failure_preserves_helper_diagnostics() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn failed_shutdown_preserves_final_sample_and_stderr() {
     let mut helper = helper(&format!(
@@ -203,6 +273,7 @@ fn failed_shutdown_preserves_final_sample_and_stderr() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn excess_stderr_is_capped_and_drained_without_blocking_the_helper() {
     let mut helper = helper(&format!(

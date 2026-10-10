@@ -1,5 +1,5 @@
 use crate::{
-    config::{Config, Volume},
+    config::{self, Config, Volume},
     filesystem::MAX_RECOVERY_SNAPSHOT_BYTES,
     sys::nvidia::Redirect,
     telemetry::{
@@ -88,7 +88,7 @@ pub(crate) struct Helper {
 /// by a helper that died (`WinFsp` normally removes it on unmount) is a dangling reparse point
 /// that cannot be listed; it is removed so the volume can be mounted there again.
 fn ensure_mount_point_free(mount: &str) -> Result<(), HelperError> {
-    let is_drive = mount.len() == 2;
+    let is_drive = config::is_drive_letter(mount);
     let probe = if is_drive {
         format!("{mount}\\")
     } else {
@@ -343,5 +343,5 @@ impl Drop for Helper {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;

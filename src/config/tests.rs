@@ -34,6 +34,68 @@ fn volume_is_mounted_inside_the_state_directory() {
 }
 
 #[test]
+fn mount_points_are_drive_letters_or_absolute_backslash_directories() {
+    for mount in [
+        "D:",
+        "T:",
+        "Z:",
+        r"C:\ram",
+        r"c:\ram",
+        r"D:\ram",
+        r"C:\Users\me\AppData\Local\NvidiaMemReplay\ram",
+        r"C:\Users\me\.hidden\...\ram",
+        r"C:\影像\ram",
+    ] {
+        assert_eq!(mount_point(mount), Ok(mount));
+    }
+    assert!(is_drive_letter("T:"));
+    assert!(!is_drive_letter("C:"));
+    assert!(!is_drive_letter(r"T:\"));
+    assert!(!is_drive_letter(r"D:\ram"));
+
+    let longest = format!(r"C:\{}", "x".repeat(MAX_MOUNT_POINT_LENGTH - 3));
+    assert!(mount_point(&longest).is_ok());
+    assert!(mount_point(&format!("{longest}x")).is_err());
+}
+
+#[test]
+fn malformed_mount_points_are_rejected_like_the_native_helper_does() {
+    for mount in [
+        "",
+        "C:",
+        "A:",
+        "c:",
+        "T",
+        "TT:",
+        "T;",
+        "1:",
+        r"T:\",
+        r"C:\ram\",
+        r"C:\\ram",
+        r"C:\ram\\here",
+        r"C:ram",
+        r"C:/ram",
+        r"C:\ram/here",
+        r"C:\.",
+        r"C:\..",
+        r"C:\ram\.",
+        r"C:\.\ram",
+        r"C:\ram\..\x",
+        r"ram\here",
+        r"\ram",
+        r"\\server\share",
+        r"\\?\C:\ram",
+        r"\\.\C:\ram",
+        r"1:\ram",
+        r"é:\ram",
+    ] {
+        let rejected = mount_point(mount);
+        assert!(rejected.is_err(), "{mount}");
+        assert!(rejected.unwrap_err().contains("drive letter"));
+    }
+}
+
+#[test]
 fn rejects_unsafe_configuration() {
     let mut config = Config::default();
     assert!(config.validate().is_ok());

@@ -7,6 +7,11 @@ const RECORDING_DIRECTORY: &str = "NVIDIA-Replay";
 /// The RAM volume is mounted at this directory inside the application state folder, so it has
 /// no drive letter and never shows up in Explorer or file dialogs.
 const MOUNT_DIRECTORY: &str = "ram";
+/// Drive-letter mount points (used by the smoke script) stay clear of the system drives.
+pub(crate) const MIN_DRIVE: char = 'D';
+pub(crate) const MAX_DRIVE: char = 'Z';
+/// The longest mount point the native helper accepts, in UTF-16 units.
+const MAX_MOUNT_POINT_LENGTH: usize = 4096;
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Config {
@@ -86,6 +91,46 @@ impl Volume {
 
 pub(crate) const fn limit_bytes(memory_limit_mb: u32) -> u64 {
     memory_limit_mb as u64 * 1_000_000
+}
+
+/// Whether `mount` is a bare drive letter `D:`..`Z:` rather than a directory.
+pub(crate) fn is_drive_letter(mount: &str) -> bool {
+    let mut chars = mount.chars();
+    matches!(
+        (chars.next(), chars.next(), chars.next()),
+        (Some(letter), Some(':'), None) if (MIN_DRIVE..=MAX_DRIVE).contains(&letter)
+    )
+}
+
+/// Validates a mount point by its syntax alone, as the native helper does (`IsMountPoint` in
+/// `vendor/memefs/replay-main.cpp`): a drive letter `D:`..`Z:`, or an absolute directory on a
+/// drive (`X:\dir[\dir...]`) with backslash separators only, no trailing separator and no empty,
+/// `.` or `..` steps. UNC and device paths are rejected.
+pub(crate) fn mount_point(value: &str) -> Result<&str, String> {
+    if is_drive_letter(value) || is_mount_directory(value) {
+        Ok(value)
+    } else {
+        Err(format!(
+            "mount point must be a drive letter {MIN_DRIVE}: through {MAX_DRIVE}: or an absolute directory such as C:\\ram"
+        ))
+    }
+}
+
+fn is_mount_directory(value: &str) -> bool {
+    let mut chars = value.chars();
+    let on_drive = matches!(
+        (chars.next(), chars.next(), chars.next()),
+        (Some(letter), Some(':'), Some('\\')) if letter.is_ascii_alphabetic()
+    );
+    let steps = chars.as_str();
+
+    on_drive
+        && !steps.is_empty()
+        && value.encode_utf16().count() <= MAX_MOUNT_POINT_LENGTH
+        && !value.contains('/')
+        && steps
+            .split('\\')
+            .all(|step| !matches!(step, "" | "." | ".."))
 }
 
 impl Config {

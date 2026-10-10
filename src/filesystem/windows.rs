@@ -1,12 +1,12 @@
 use crate::{
-    config::{MAX_MEMORY_LIMIT_MB, MIN_MEMORY_LIMIT_MB, Volume},
+    config::{self, MAX_MEMORY_LIMIT_MB, MIN_MEMORY_LIMIT_MB, Volume},
     sys::{helper::Helper, icon, nvidia, startup},
 };
 use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
 use std::{
     io::{self, BufRead, Read, Write},
-    path::{Component, Path, PathBuf, Prefix},
+    path::PathBuf,
     sync::mpsc,
     thread,
     time::Duration,
@@ -14,9 +14,6 @@ use std::{
 
 const TELEMETRY_REPORT_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_STOP_COMMAND_BYTES: u64 = 512;
-/// Drive-letter mount points (used by the smoke script) stay clear of the system drives.
-const MIN_DRIVE: char = 'D';
-const MAX_DRIVE: char = 'Z';
 
 #[derive(Parser)]
 #[command(name = crate::APP_NAME)]
@@ -53,30 +50,9 @@ pub(crate) enum Launch {
 }
 
 /// A drive letter `D:`..`Z:`, or an absolute directory path without `.`/`..` steps or a
-/// trailing separator (the helper checks the same).
+/// trailing separator; the native helper checks the same (see [`config::mount_point`]).
 fn mount_point(value: &str) -> Result<String, String> {
-    let mut chars = value.chars();
-    let letter = matches!(
-        (chars.next(), chars.next(), chars.next()),
-        (Some(letter), Some(':'), None) if (MIN_DRIVE..=MAX_DRIVE).contains(&letter)
-    );
-    // A directory on a drive (`C:\...`), never a UNC or device path.
-    let path = Path::new(value);
-    let mut steps = path.components();
-    let on_disk = matches!(
-        steps.next(),
-        Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_))
-    );
-    let directory = on_disk
-        && path.has_root()
-        && !value.ends_with(['\\', '/'])
-        && steps.all(|step| matches!(step, Component::RootDir | Component::Normal(_)));
-
-    if letter || directory {
-        Ok(value.to_owned())
-    } else {
-        Err("mount point must be a drive letter D: through Z: or an absolute directory".to_owned())
-    }
+    config::mount_point(value).map(str::to_owned)
 }
 
 pub(super) fn dispatch() -> Result<Launch> {
