@@ -9,7 +9,7 @@ Local changes for nvidia-mem-replay:
 
 - `replay-main.cpp` replaces the service CLI in the build. It mounts a case
   insensitive NTFS-named volume with an explicit byte ceiling, publishes bounded
-  JSON telemetry every 250 ms, and drains the dispatcher/unmounts on stdin
+  JSON telemetry every 10 s, and drains the dispatcher/unmounts on stdin
   command or EOF. WinFsp is loaded from its registered shared installation.
 - `memfs.h` and `io.cpp` add an atomic cumulative successful-write counter.
   Overwrites and deleted files remain counted; failed callbacks do not add bytes.
