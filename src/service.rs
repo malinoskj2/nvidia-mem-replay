@@ -198,7 +198,6 @@ struct Session {
     redirect: Redirect,
     meter: Meter,
     sample: Option<Sample>,
-    checkpoint: Instant,
     stopping: bool,
 }
 
@@ -573,14 +572,14 @@ fn start(store: &Store, config: &Config, state: &mut State) -> Result<()> {
 
     state.memory_limit_bytes = Some(config.limit_bytes());
     state.message = DisplayStatus::Waiting;
-    state.redirection_checked = Some(Instant::now());
     let now = Instant::now();
+    state.redirection_checked = Some(now);
+    state.accounting.begin_session(now);
     state.session = Some(Session {
         helper,
         redirect,
         meter: Meter::new(state.accounting.total),
         sample: None,
-        checkpoint: now,
         stopping: false,
     });
 
@@ -604,7 +603,7 @@ fn poll(
     } else {
         DisplayStatus::Ready
     };
-    accounting.checkpoint(store, &mut session.checkpoint, now);
+    accounting.checkpoint(store, now);
     Ok(())
 }
 
@@ -737,7 +736,6 @@ mod tests {
             redirect: redirect(),
             meter: Meter::new(0),
             sample: None,
-            checkpoint: Instant::now(),
             stopping: false,
         }
     }
@@ -985,13 +983,13 @@ mod tests {
         let store = Store::at(directory.path().to_owned()).unwrap();
 
         let now = Instant::now();
-        let mut last_attempt = now;
         let mut accounting = Accounting::default();
+        accounting.begin_session(now);
         let mut meter = Meter::new(0);
         accounting.observe(&mut meter, &sample(100), now).unwrap();
         std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
 
-        accounting.checkpoint(&store, &mut last_attempt, now + Duration::from_secs(10));
+        accounting.checkpoint(&store, now + Duration::from_secs(10));
 
         assert_eq!(accounting.total, 100);
         assert!(accounting.warning.is_some());
@@ -1006,11 +1004,11 @@ mod tests {
         accounting
             .observe(&mut meter, &sample(150), now + Duration::from_secs(11))
             .unwrap();
-        accounting.checkpoint(&store, &mut last_attempt, now + Duration::from_secs(11));
+        accounting.checkpoint(&store, now + Duration::from_secs(11));
 
         assert_eq!(store.lifetime().unwrap(), 0);
 
-        accounting.checkpoint(&store, &mut last_attempt, now + Duration::from_secs(20));
+        accounting.checkpoint(&store, now + Duration::from_secs(20));
 
         assert_eq!(store.lifetime().unwrap(), 150);
         assert!(accounting.warning.is_none());
@@ -1026,12 +1024,12 @@ mod tests {
         accounting.load(&store).unwrap();
         let mut meter = Meter::new(accounting.total);
         let now = Instant::now();
-        let mut last_attempt = now;
+        accounting.begin_session(now);
 
         // A write would fail; an unchanged counter should never attempt one.
         std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
         accounting.observe(&mut meter, &sample(0), now).unwrap();
-        accounting.checkpoint(&store, &mut last_attempt, now + Duration::from_secs(10));
+        accounting.checkpoint(&store, now + Duration::from_secs(10));
         assert!(accounting.warning.is_none());
         assert_eq!(store.lifetime().unwrap(), 100);
 
@@ -1039,14 +1037,14 @@ mod tests {
         accounting
             .observe(&mut meter, &sample(25), now + Duration::from_secs(11))
             .unwrap();
-        accounting.checkpoint(&store, &mut last_attempt, now + Duration::from_secs(20));
+        accounting.checkpoint(&store, now + Duration::from_secs(20));
         assert_eq!(store.lifetime().unwrap(), 125);
 
         std::fs::create_dir(directory.path().join("lifetime.pending")).unwrap();
         accounting
             .observe(&mut meter, &sample(25), now + Duration::from_secs(21))
             .unwrap();
-        accounting.checkpoint(&store, &mut last_attempt, now + Duration::from_secs(30));
+        accounting.checkpoint(&store, now + Duration::from_secs(30));
         assert!(accounting.warning.is_none());
         assert_eq!(store.lifetime().unwrap(), 125);
     }
@@ -1223,10 +1221,12 @@ mod tests {
             redirect: redirect(),
             meter: Meter::new(100),
             sample: None,
-            checkpoint: now.checked_sub(Duration::from_secs(10)).unwrap(),
             stopping: false,
         };
         let mut state = State::default();
+        state
+            .accounting
+            .begin_session(now.checked_sub(Duration::from_secs(10)).unwrap());
         state
             .accounting
             .observe(&mut session.meter, &first_sample, now)

@@ -16,9 +16,16 @@ pub(super) struct Accounting {
     pub(super) total: u64,
     pub(super) dirty: bool,
     pub(super) warning: Option<String>,
+    last_attempt: Option<Instant>,
 }
 
 impl Accounting {
+    /// Starts the checkpoint cadence so the first persist attempt follows the session start by
+    /// `CHECKPOINT_INTERVAL`.
+    pub(super) fn begin_session(&mut self, now: Instant) {
+        self.last_attempt = Some(now);
+    }
+
     pub(super) fn load(&mut self, store: &Store) -> Result<()> {
         // Unsaved writes remain counted across a session restart.
         if !self.dirty {
@@ -40,7 +47,8 @@ impl Accounting {
         Ok(())
     }
 
-    pub(super) fn checkpoint(&mut self, store: &Store, last_attempt: &mut Instant, now: Instant) {
+    pub(super) fn checkpoint(&mut self, store: &Store, now: Instant) {
+        let last_attempt = self.last_attempt.get_or_insert(now);
         if now.duration_since(*last_attempt) < CHECKPOINT_INTERVAL {
             return;
         }
