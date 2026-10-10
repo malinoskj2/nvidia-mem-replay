@@ -12,6 +12,7 @@ namespace Memfs {
 
 	private:
 		NTSTATUS status;
+		std::string message;
 	};
 
 	class FileNameTooLongException final : public std::exception {
