@@ -23,6 +23,73 @@ fn only_paths_on_the_ram_volume_count_as_inside_the_mount() {
     assert!(!inside_mount(r"S:\NvidiaTemp", r"T:\NVIDIA-Replay"));
 }
 
+#[cfg(windows)]
+#[test]
+fn only_connection_failures_of_the_first_call_make_the_engine_unavailable() {
+    use shadowplay::ApiError;
+
+    let refused = || {
+        NvidiaError::Api(ApiError::Call {
+            name: shadowplay::TEMPORARY_PATH.to_owned(),
+            result: -1,
+        })
+    };
+
+    // Reading the live location first: a failed connection means the engine is not there.
+    let unreachable = refused().while_reaching();
+    assert!(matches!(unreachable, NvidiaError::Unreachable(_)));
+    assert!(unreachable.is_engine_unavailable());
+    assert!(
+        unreachable
+            .to_string()
+            .contains("NVIDIA App is not running")
+    );
+    assert!(unreachable.to_string().contains("TempFilePath"));
+    assert!(
+        NvidiaError::Api(ApiError::Create(-1))
+            .while_reaching()
+            .is_engine_unavailable()
+    );
+
+    // The same HRESULT from a later call (apply, restore, the watchdog) is a real error.
+    assert!(!refused().is_engine_unavailable());
+
+    // Internal and value errors never count as an unreachable engine, whenever they happen.
+    for error in [
+        NvidiaError::Api(ApiError::Name),
+        NvidiaError::Api(ApiError::Memory),
+        NvidiaError::Api(ApiError::Lock),
+        NvidiaError::Api(ApiError::NotFound),
+        NvidiaError::Api(ApiError::NoText(shadowplay::TEMPORARY_PATH.to_owned())),
+        NvidiaError::Path,
+        NvidiaError::Format,
+        NvidiaError::RamOriginal,
+    ] {
+        let message = error.to_string();
+        let reinterpreted = error.while_reaching();
+        assert!(!reinterpreted.is_engine_unavailable(), "{message}");
+        assert_eq!(reinterpreted.to_string(), message);
+    }
+}
+
+#[cfg(not(windows))]
+#[test]
+fn only_the_missing_platform_support_makes_the_engine_unavailable() {
+    assert!(NvidiaError::Unsupported.is_engine_unavailable());
+    assert!(
+        NvidiaError::Unsupported
+            .while_reaching()
+            .is_engine_unavailable()
+    );
+    for error in [
+        NvidiaError::Path,
+        NvidiaError::Format,
+        NvidiaError::RamOriginal,
+    ] {
+        assert!(!error.while_reaching().is_engine_unavailable());
+    }
+}
+
 #[test]
 fn binary_and_string_paths_preserve_the_registry_type() {
     for kind in [1, 2, 3] {

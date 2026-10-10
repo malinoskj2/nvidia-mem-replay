@@ -43,6 +43,11 @@ pub(crate) enum NvidiaError {
     #[error("NVIDIA ShadowPlay: {0}")]
     #[cfg(windows)]
     Api(#[from] shadowplay::ApiError),
+    /// The engine could not be reached when the live location was first read; the NVIDIA App
+    /// is not running (yet).
+    #[error("the NVIDIA App is not running or its ShadowPlay engine could not be reached: {0}")]
+    #[cfg(windows)]
+    Unreachable(#[source] shadowplay::ApiError),
     #[error("this app requires Windows and the NVIDIA overlay")]
     #[cfg(not(windows))]
     Unsupported,
@@ -96,8 +101,10 @@ impl RawValue {
 }
 
 /// Plan the redirection from the location the running `ShadowPlay` engine uses right now.
+/// This is the first call of a start, so an engine that cannot be reached here is reported as
+/// [`NvidiaError::Unreachable`]; later calls report their failures as they are.
 pub(crate) fn plan(target: String) -> Result<Redirect, NvidiaError> {
-    let original_path = current_path()?;
+    let original_path = current_path().map_err(NvidiaError::while_reaching)?;
     if inside_mount(&original_path, &target) {
         return Err(NvidiaError::RamOriginal);
     }
@@ -152,16 +159,33 @@ pub(crate) fn redirected(redirect: &Redirect) -> Result<bool, NvidiaError> {
 }
 
 impl NvidiaError {
-    /// The engine could not be reached at all, as opposed to refusing a value.
-    pub(crate) fn is_engine_unavailable(&self) -> bool {
+    /// The engine could not be reached at all, as opposed to refusing a value or failing
+    /// internally; the caller may simply wait for the NVIDIA App to start.
+    pub(crate) const fn is_engine_unavailable(&self) -> bool {
         #[cfg(windows)]
         {
-            matches!(self, Self::Api(_))
+            matches!(self, Self::Unreachable(_))
         }
         #[cfg(not(windows))]
         {
             matches!(self, Self::Unsupported)
         }
+    }
+
+    /// Reinterpret a failure of the first engine call: an API failure to connect means the
+    /// engine is not there, while value and internal errors stay what they are.
+    #[cfg(windows)]
+    fn while_reaching(self) -> Self {
+        match self {
+            Self::Api(error) if error.is_connection_failure() => Self::Unreachable(error),
+            other => other,
+        }
+    }
+
+    /// Without an engine to reach, every error already says what it is.
+    #[cfg(not(windows))]
+    const fn while_reaching(self) -> Self {
+        self
     }
 }
 

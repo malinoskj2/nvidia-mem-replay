@@ -124,7 +124,11 @@ reads at its next start is restored instead.
 Two situations are handled in the worker loop. When a start fails because the
 engine is unreachable (the NVIDIA App has not started yet, typically at
 sign-in), the worker shows "Waiting for the NVIDIA App" and retries every ten
-seconds instead of reporting an error. While recording, it reads the live
+seconds instead of reporting an error. Only the first engine call of a start,
+reading the live location in `nvidia::plan`, is judged that way
+(`NvidiaError::Unreachable`, from a failed library load, interface creation or
+call); a value the engine refuses later, a missing library and internal errors
+are reported as errors. While recording, it reads the live
 location every five seconds: the overlay re-pushes its own stored copy of the
 location (`GallerySettings.json`) whenever it starts, which silently undoes the
 redirection, so a changed value is applied again with the usual Instant Replay

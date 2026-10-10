@@ -106,6 +106,19 @@ pub(crate) enum ApiError {
     Lock,
 }
 
+impl ApiError {
+    /// Whether the engine itself could not be reached: the library did not load, no interface
+    /// was created, or the engine answered a call with a failure (its message bus times out while
+    /// `nvcontainer.exe` is not running). A missing library or export is an installation
+    /// problem, a missing value an answer, and the remaining variants are internal errors.
+    pub(crate) const fn is_connection_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::Load { .. } | Self::Create(_) | Self::Call { .. }
+        )
+    }
+}
+
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn LoadLibraryExW(file_name: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
