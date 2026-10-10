@@ -4,6 +4,10 @@
 ![NVIDIA Instant Replay](https://img.shields.io/badge/NVIDIA-Instant_Replay-76B900)
 ![GPL-3.0 license](https://img.shields.io/badge/license-GPL--3.0-555555)
 
+<p align="center">
+  <img src="assets/nvidia-mem-replay-window.png" alt="nvidia-mem-replay window" width="472">
+</p>
+
 **Use RAM for NVIDIA Instant Replay’s temporary recordings.**  
 Recording at high bit-rates introduces unnecessary wear on your SSD, with potential for easily 100's of gigabytes of writes in a single session. This lowers writes by holding the rolling temporary recordings in memory until you choose choose to save them.
 
