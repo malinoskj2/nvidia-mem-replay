@@ -25,7 +25,7 @@ Copy-Item target\x86_64-pc-windows-msvc\release\nvidia-mem-replay.exe dist\
 Copy-Item "$nativeOutput\memefs-x64.exe" dist\
 Copy-Item $setup dist\winfsp-2.1.25156.msi
 Copy-Item $source dist\source\winfsp-2.1-source.tar.gz
-Copy-Item README.md, DEVELOPMENT.md, LICENSE dist\
+Copy-Item README.md, LICENSE dist\
 Copy-Item licenses\* dist\licenses\
 
 # Include complete dependency sources and notices with the GPL application source.
@@ -33,7 +33,7 @@ $stage = Join-Path $cache 'nvidia-mem-replay-source'
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
 
-$sourceFiles = @('src', 'tests', 'vendor', 'scripts', 'installer', 'licenses', '.cargo', 'Cargo.toml', 'Cargo.lock', 'LICENSE', 'README.md', 'DEVELOPMENT.md')
+$sourceFiles = @('src', 'tests', 'vendor', 'scripts', 'installer', 'licenses', '.cargo', 'Cargo.toml', 'Cargo.lock', 'LICENSE', 'README.md')
 foreach ($item in $sourceFiles) { Copy-Item $item $stage -Recurse }
 
 $dependencies = Join-Path $stage 'dependencies'

@@ -72,7 +72,6 @@ Section "nvidia-mem-replay"
   File "..\dist\nvidia-mem-replay.exe"
   File "..\dist\memefs-x64.exe"
   File "..\dist\README.md"
-  File "..\dist\DEVELOPMENT.md"
   File "..\dist\LICENSE"
 
   SetOutPath "$INSTDIR\licenses"
