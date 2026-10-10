@@ -9,7 +9,7 @@
 </p>
 
 **Use RAM for NVIDIA Instant Replay’s temporary recordings.**  
-Recording at high bit-rates introduces unnecessary wear on your SSD, with potential for easily 100's of gigabytes of writes in a single session. This lowers writes by holding the rolling temporary recordings in memory until you choose choose to save them.
+Recording at high birate introduces unnecessary wear on your SSD, with potential for easily 100's of gigabytes of writes in a single session. This lowers writes by holding the rolling temporary recordings in memory until you choose choose to save them.
 
 You need **64-bit Windows**, an **NVIDIA GPU**, and **Instant Replay** working in the NVIDIA overlay.
 
