@@ -20,33 +20,39 @@ pub(super) struct Diagnostics {
     reader: Option<JoinHandle<()>>,
 }
 
+fn capture_stderr(mut stderr: ChildStderr, output: &Mutex<Capture>) {
+    let mut buffer = [0; 1024];
+    loop {
+        let count = match stderr.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+
+        let Ok(mut capture) = output.lock() else {
+            break;
+        };
+        let retained = count.min(MAX_DIAGNOSTIC_BYTES - capture.bytes.len());
+        capture.bytes.extend_from_slice(&buffer[..retained]);
+        capture.truncated |= retained < count;
+        // Drain excess output so a full stderr pipe cannot block the helper.
+    }
+}
+
 impl Diagnostics {
-    pub(super) fn new(stderr: Option<ChildStderr>) -> Self {
+    pub(super) fn new(stderr: Option<ChildStderr>) -> io::Result<Self> {
         let capture = Arc::new(Mutex::new(Capture::default()));
         let output = Arc::clone(&capture);
-        let reader = stderr.map(|mut stderr| {
-            thread::spawn(move || {
-                let mut buffer = [0; 1024];
-                loop {
-                    let count = match stderr.read(&mut buffer) {
-                        Ok(0) => break,
-                        Ok(count) => count,
-                        Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                        Err(_) => break,
-                    };
-
-                    let Ok(mut capture) = output.lock() else {
-                        break;
-                    };
-                    let retained = count.min(MAX_DIAGNOSTIC_BYTES - capture.bytes.len());
-                    capture.bytes.extend_from_slice(&buffer[..retained]);
-                    capture.truncated |= retained < count;
-                    // Drain excess output so a full stderr pipe cannot block the helper.
-                }
+        let reader = stderr
+            .map(|stderr| {
+                thread::Builder::new()
+                    .name("helper-stderr".to_owned())
+                    .spawn(move || capture_stderr(stderr, &output))
             })
-        });
+            .transpose()?;
 
-        Self { capture, reader }
+        Ok(Self { capture, reader })
     }
 
     pub(super) fn finish(&mut self) {

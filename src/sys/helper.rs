@@ -8,7 +8,7 @@ use crate::{
 };
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
-    process::{Child, ChildStdin, Command, ExitStatus, Stdio},
+    process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -111,6 +111,31 @@ fn ensure_mount_point_free(mount: &str) -> Result<(), HelperError> {
     }
 }
 
+fn read_telemetry(stdout: ChildStdout, output: &Mutex<Inbox>) {
+    let mut reader = BufReader::new(stdout);
+    loop {
+        let mut line = Vec::new();
+        let result = reader
+            .by_ref()
+            .take((MAX_TELEMETRY_FRAME_BYTES + 1) as u64)
+            .read_until(b'\n', &mut line);
+        let parsed = match result {
+            Ok(0) => break,
+            Ok(_) => decode_sample(&line),
+            Err(error) => Err(TelemetryError::Io(error)),
+        };
+
+        let Ok(mut inbox) = output.lock() else { break };
+        match parsed {
+            Ok(sample) => inbox.latest = Some((sample, Instant::now())),
+            Err(error) => {
+                inbox.error = Some(Arc::new(error));
+                break;
+            }
+        }
+    }
+}
+
 impl Helper {
     pub(crate) fn start(config: &Config, redirect: &Redirect) -> Result<Self, HelperError> {
         let volume = config.volume();
@@ -206,31 +231,10 @@ impl Helper {
             .ok_or_else(|| io::Error::other("missing helper stdout"))?;
         let inbox = Arc::new(Mutex::new(Inbox::default()));
         let output = Arc::clone(&inbox);
-        let reader = thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            loop {
-                let mut line = Vec::new();
-                let result = reader
-                    .by_ref()
-                    .take((MAX_TELEMETRY_FRAME_BYTES + 1) as u64)
-                    .read_until(b'\n', &mut line);
-                let parsed = match result {
-                    Ok(0) => break,
-                    Ok(_) => decode_sample(&line),
-                    Err(error) => Err(TelemetryError::Io(error)),
-                };
-
-                let Ok(mut inbox) = output.lock() else { break };
-                match parsed {
-                    Ok(sample) => inbox.latest = Some((sample, Instant::now())),
-                    Err(error) => {
-                        inbox.error = Some(Arc::new(error));
-                        break;
-                    }
-                }
-            }
-        });
-        let diagnostics = Diagnostics::new(child.stderr.take());
+        let reader = thread::Builder::new()
+            .name("helper-telemetry".to_owned())
+            .spawn(move || read_telemetry(stdout, &output))?;
+        let diagnostics = Diagnostics::new(child.stderr.take())?;
 
         Ok(Self {
             input: child.stdin.take(),
