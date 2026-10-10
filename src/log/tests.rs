@@ -55,4 +55,8 @@ fn mirrors_earlier_and_later_entries_to_the_file() {
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(written.contains("info     log test: before mirror\n"));
     assert!(written.contains("info     log test: after mirror\n"));
+
+    // Windows cannot delete the directory while the journal still holds the file open.
+    assert!(detach_file().is_some());
+    directory.close().unwrap();
 }

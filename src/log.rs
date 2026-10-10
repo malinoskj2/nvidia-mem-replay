@@ -28,7 +28,7 @@ impl Level {
 pub(crate) struct Entry {
     /// Increases by one per entry; lets a reader fetch only what it has not seen.
     pub(crate) sequence: u64,
-    /// Local wall-clock time, `HH:MM:SS`.
+    /// Wall-clock time, `HH:MM:SS`: local time on Windows, UTC elsewhere.
     pub(crate) time: String,
     pub(crate) level: Level,
     pub(crate) message: String,
@@ -44,14 +44,16 @@ impl Entry {
 struct Journal {
     entries: VecDeque<Entry>,
     next_sequence: u64,
-    file: Option<File>,
 }
 
 static JOURNAL: Mutex<Journal> = Mutex::new(Journal {
     entries: VecDeque::new(),
     next_sequence: 1,
-    file: None,
 });
+
+/// The mirror file, apart from the journal so that readers never wait on the disk. A writer
+/// takes this lock first and the journal lock inside it, which keeps the file in sequence order.
+static FILE: Mutex<Option<File>> = Mutex::new(None);
 
 pub(crate) fn info(message: impl Display) {
     record(Level::Info, message);
@@ -78,38 +80,58 @@ pub(crate) fn since(sequence: u64) -> Vec<Entry> {
 /// Writes the entries so far to `path`, replacing the file from an earlier run, and every
 /// later entry as it is recorded.
 pub(crate) fn mirror_to(path: &Path) -> std::io::Result<()> {
-    let mut file = File::create(path)?;
-    let mut journal = lock();
-    for entry in &journal.entries {
-        writeln!(file, "{}", entry.line())?;
+    let mut created = File::create(path)?;
+    let mut file = file_lock();
+    // No entry is recorded while the file lock is held, so nothing falls between the copy and
+    // the switch to the new file.
+    let lines: Vec<String> = lock().entries.iter().map(Entry::line).collect();
+    for line in lines {
+        writeln!(created, "{line}")?;
     }
-    journal.file = Some(file);
+    *file = Some(created);
     Ok(())
+}
+
+/// Stops mirroring and hands back the file, so a test can let its directory go.
+#[cfg(test)]
+fn detach_file() -> Option<File> {
+    file_lock().take()
 }
 
 fn record(level: Level, message: impl Display) {
     let time = timestamp();
-    let mut journal = lock();
-    let entry = Entry {
-        sequence: journal.next_sequence,
-        time,
-        level,
-        message: message.to_string(),
+    let message = message.to_string();
+    let mut file = file_lock();
+    let line = {
+        let mut journal = lock();
+        let entry = Entry {
+            sequence: journal.next_sequence,
+            time,
+            level,
+            message,
+        };
+        let line = entry.line();
+        journal.next_sequence += 1;
+        journal.entries.push_back(entry);
+        if journal.entries.len() > CAPACITY {
+            journal.entries.pop_front();
+        }
+        line
     };
-    journal.next_sequence += 1;
-    if let Some(file) = &mut journal.file {
+    if let Some(file) = file.as_mut() {
         // A full disk must not take the application down with it.
-        let _ = writeln!(file, "{}", entry.line());
-    }
-    journal.entries.push_back(entry);
-    if journal.entries.len() > CAPACITY {
-        journal.entries.pop_front();
+        let _ = writeln!(file, "{line}");
     }
 }
 
 fn lock() -> std::sync::MutexGuard<'static, Journal> {
     JOURNAL
         .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn file_lock() -> std::sync::MutexGuard<'static, Option<File>> {
+    FILE.lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
