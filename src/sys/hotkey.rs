@@ -43,9 +43,7 @@ impl Chord {
     ) -> Result<Self, HotkeyError> {
         let count = dword(count).ok_or(HotkeyError::Unassigned)?;
         let wanted = usize::try_from(count).map_or(MAX_KEYS, |count| count.min(MAX_KEYS));
-        if wanted == 0 {
-            return Err(HotkeyError::Unassigned);
-        }
+        (wanted != 0).ok_or(HotkeyError::Unassigned)?;
 
         let codes: Vec<u16> = keys
             .into_iter()

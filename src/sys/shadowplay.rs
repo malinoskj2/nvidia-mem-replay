@@ -206,9 +206,8 @@ impl Variant {
 
 impl PropertyArgs {
     fn new(name: &str) -> Result<Self, ApiError> {
-        if name.is_empty() || !name.is_ascii() || name.len() >= PROPERTY_NAME_CAPACITY {
-            return Err(ApiError::Name);
-        }
+        (!name.is_empty() && name.is_ascii() && name.len() < PROPERTY_NAME_CAPACITY)
+            .ok_or(ApiError::Name)?;
 
         let mut args = Self {
             version: PROPERTY_ARGS_VERSION,
