@@ -5,6 +5,9 @@ on: [push, pull_request]
 permissions:
   contents: read
 
+env:
+  CARGO_BUILD_WARNINGS: deny
+
 jobs:
   native-regressions:
     runs-on: ubuntu-24.04
@@ -24,7 +27,7 @@ jobs:
           toolchain: 1.99.0
           components: rustfmt, clippy
       - run: cargo fmt --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo clippy --locked --all-targets
       - run: cargo test --locked
 
   windows-package:
