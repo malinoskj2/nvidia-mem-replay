@@ -2,8 +2,11 @@
 name = "nvidia-mem-replay"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.99"
+rust-version = "1.98"
+description = "NVIDIA Instant Replay temporary storage in RAM"
+repository = "https://github.com/malinoskj2/nvidia-mem-replay"
 license = "GPL-3.0-only"
+publish = false
 
 [dependencies]
 anyhow = "1"
@@ -29,9 +32,6 @@ strip = "symbols"
 codegen-units = 1
 
 [lints.rust]
-# Allowed only in src/sys/shadowplay.rs (the binding to NVIDIA's ShadowPlay API library) and
-# for two one-line winsafe calls that the crate marks unsafe: a virtual-key constant in
-# src/sys/hotkey.rs and EM_SCROLLCARET for the Logs view in src/gui/logs.rs.
 unsafe_code = "deny"
 unreachable_pub = "warn"
 
