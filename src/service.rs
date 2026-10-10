@@ -147,7 +147,10 @@ impl Worker {
         let status = Arc::new(Mutex::new(Status::default()));
         let output = Arc::clone(&status);
         let mailbox = Arc::clone(&control.mailbox);
-        let join = thread::spawn(move || run(&store, &config, &receiver, &mailbox, &output));
+        let join = thread::Builder::new()
+            .name("recording-worker".to_owned())
+            .spawn(move || run(&store, &config, &receiver, &mailbox, &output))
+            .expect("spawn the recording worker thread");
 
         Self {
             control,
