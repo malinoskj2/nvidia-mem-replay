@@ -133,6 +133,7 @@ fn event(code: u16, flags: co::KEYEVENTF) -> HwKbMouse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn dword_bytes(value: u32) -> Vec<u8> {
         value.to_le_bytes().to_vec()
@@ -152,29 +153,29 @@ mod tests {
     fn rejects_unassigned_or_malformed_hotkeys() {
         let keys = [dword_bytes(0x12), dword_bytes(0x7b)];
 
-        assert!(matches!(
+        assert_matches!(
             Chord::decode(&dword_bytes(0), keys.iter().map(Vec::as_slice)),
             Err(HotkeyError::Unassigned)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             Chord::decode(&[1, 0], keys.iter().map(Vec::as_slice)),
             Err(HotkeyError::Unassigned)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             Chord::decode(&dword_bytes(3), keys.iter().map(Vec::as_slice)),
             Err(HotkeyError::Unassigned)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             Chord::decode(&dword_bytes(1), [dword_bytes(0)].iter().map(Vec::as_slice)),
             Err(HotkeyError::Unassigned)
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             Chord::decode(
                 &dword_bytes(1),
                 [dword_bytes(0x1_0000)].iter().map(Vec::as_slice)
             ),
             Err(HotkeyError::Unassigned)
-        ));
+        );
     }
 
     #[test]

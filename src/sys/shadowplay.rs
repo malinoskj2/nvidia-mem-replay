@@ -146,6 +146,7 @@ struct CreateParams {
 }
 
 /// Enough of a COM `VARIANT` to carry a `BSTR`.
+#[derive(Debug)]
 #[repr(C)]
 struct Variant {
     kind: u16,
@@ -153,6 +154,7 @@ struct Variant {
     data: [*mut c_void; 2],
 }
 
+#[derive(Debug)]
 #[repr(C)]
 struct PropertyArgs {
     version: u32,
@@ -428,6 +430,7 @@ fn library_path() -> Result<PathBuf, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn property_names_are_short_ascii_and_nul_padded() {
@@ -445,12 +448,12 @@ mod tests {
         );
         assert_eq!(args.value.kind, 0);
 
-        assert!(matches!(PropertyArgs::new(""), Err(ApiError::Name)));
-        assert!(matches!(PropertyArgs::new("Tëmp"), Err(ApiError::Name)));
-        assert!(matches!(
+        assert_matches!(PropertyArgs::new(""), Err(ApiError::Name));
+        assert_matches!(PropertyArgs::new("Tëmp"), Err(ApiError::Name));
+        assert_matches!(
             PropertyArgs::new(&"x".repeat(PROPERTY_NAME_CAPACITY)),
             Err(ApiError::Name)
-        ));
+        );
     }
 
     #[test]

@@ -343,6 +343,7 @@ mod tests {
     #[test]
     fn only_connection_failures_of_the_first_call_make_the_engine_unavailable() {
         use shadowplay::ApiError;
+        use std::assert_matches;
 
         let refused = || {
             NvidiaError::Api(ApiError::Call {
@@ -353,7 +354,7 @@ mod tests {
 
         // Reading the live location first: a failed connection means the engine is not there.
         let unreachable = refused().while_reaching();
-        assert!(matches!(unreachable, NvidiaError::Unreachable(_)));
+        assert_matches!(unreachable, NvidiaError::Unreachable(_));
         assert!(unreachable.is_engine_unavailable());
         assert!(
             unreachable
