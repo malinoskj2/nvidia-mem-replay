@@ -13,15 +13,15 @@ use crate::{
     },
 };
 use anyhow::Result;
-use layout::{
-    BLACK, GRAY, MARGIN, RED, WINDOW_WIDTH, button, label, resize_by, set_text, shift_by, show,
-};
+use footer::Footer;
+use layout::{MARGIN, WINDOW_WIDTH, resize_by, shift_by};
 use logs::LogsPage;
 use settings::SettingsPage;
 use status::StatusPage;
 use std::{cell::RefCell, rc::Rc};
 use winsafe::{self as w, co, gui, prelude::*};
 
+mod footer;
 mod layout;
 mod logs;
 mod settings;
@@ -37,8 +37,6 @@ const ICON_RESOURCE: u16 = 1;
 /// The tab and its margins; a footer row is added only while it has something to say.
 const WINDOW_HEIGHT: i32 = MARGIN + TAB_HEIGHT + MARGIN;
 const TAB_HEIGHT: i32 = 324;
-/// Height of the footer row that shows the tray fallback or the shutdown controls.
-const FOOTER_EXTRA: i32 = 36;
 
 /// Shows the application window, or the startup error, until the user quits.
 pub(crate) fn run(startup: Result<(Worker, Config)>, start_hidden: bool) -> Result<()> {
@@ -86,77 +84,6 @@ impl Heights {
         self.pages = pages;
         self.window = window;
         deltas
-    }
-}
-
-/// The row under the tab, added only when it has something to say: the tray fallback hint,
-/// or the shutdown progress with its retry and exit buttons.
-#[derive(Clone)]
-struct Footer {
-    hint: gui::Label,
-    shutdown_text: gui::Label,
-    retry: gui::Button,
-    exit: gui::Button,
-}
-
-impl Footer {
-    fn new(wnd: &gui::WindowMain) -> Self {
-        let y = MARGIN + TAB_HEIGHT + 6;
-        Self {
-            hint: label(wnd, "", MARGIN + 2, y, WINDOW_WIDTH - 2 * MARGIN, 1),
-            shutdown_text: label(wnd, "", MARGIN + 2, y, WINDOW_WIDTH - 2 * MARGIN - 220, 2),
-            retry: button(
-                wnd,
-                text::RETRY_SHUTDOWN,
-                WINDOW_WIDTH - MARGIN - 212,
-                y,
-                104,
-            ),
-            exit: button(wnd, text::EXIT_ANYWAY, WINDOW_WIDTH - MARGIN - 100, y, 100),
-        }
-    }
-
-    fn controls(&self) -> [&w::HWND; 4] {
-        [
-            self.hint.hwnd(),
-            self.shutdown_text.hwnd(),
-            self.retry.hwnd(),
-            self.exit.hwnd(),
-        ]
-    }
-
-    /// The hint is muted and the shutdown text red; the window has no other labels.
-    fn text_colour(&self, hwnd: &w::HWND) -> w::COLORREF {
-        if *hwnd == *self.shutdown_text.hwnd() {
-            RED
-        } else if *hwnd == *self.hint.hwnd() {
-            GRAY
-        } else {
-            BLACK
-        }
-    }
-
-    fn show_hint(&self, message: &str) {
-        set_text(&self.hint, message);
-        show(&self.hint, true);
-    }
-
-    /// Replaces the hint with the shutdown progress.
-    fn begin_shutdown(&self) {
-        show(&self.hint, false);
-        set_text(&self.shutdown_text, text::SHUTDOWN_PENDING);
-        show(&self.shutdown_text, true);
-    }
-
-    /// Reports the shutdown: a `failure` offers the retry and exit buttons, none says it is
-    /// still under way.
-    fn show_shutdown(&self, failure: Option<&str>) {
-        set_text(
-            &self.shutdown_text,
-            failure.unwrap_or(text::SHUTDOWN_PENDING),
-        );
-        show(&self.retry, failure.is_some());
-        show(&self.exit, failure.is_some());
     }
 }
 
@@ -269,15 +196,6 @@ impl Main {
             me.shared.borrow_mut().tray = None;
             Ok(())
         });
-
-        let footer = self.footer.clone();
-        layout::draw(
-            &self.wnd,
-            self.wnd.on(),
-            Vec::new(),
-            co::COLOR::BTNFACE,
-            move |hwnd| footer.text_colour(hwnd),
-        );
 
         let me = self.clone();
         self.settings.apply.on().bn_clicked(move || {
@@ -399,7 +317,7 @@ impl Main {
 
     /// Adds the footer row under the tab; it is never taken away again.
     fn show_footer_row(&self) {
-        self.shared.borrow_mut().heights.footer = FOOTER_EXTRA;
+        self.shared.borrow_mut().heights.footer = footer::HEIGHT;
         self.fit_window();
     }
 
