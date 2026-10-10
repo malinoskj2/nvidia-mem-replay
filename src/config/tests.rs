@@ -22,10 +22,13 @@ fn migrates_legacy_settings_without_accepting_unknown_ones() {
 #[test]
 fn volume_is_mounted_inside_the_state_directory() {
     let config = Config::default();
-    let state = crate::storage::state_directory().display().to_string();
+    let mount = crate::storage::state_directory()
+        .join("ram")
+        .display()
+        .to_string();
 
-    assert_eq!(Config::mount(), format!("{state}\\ram"));
-    assert_eq!(config.target(), format!("{state}\\ram\\NVIDIA-Replay"));
+    assert_eq!(Config::mount(), mount);
+    assert_eq!(config.target(), format!("{mount}\\NVIDIA-Replay"));
     assert_eq!(config.volume().limit_bytes, 8_192_000_000);
     assert_eq!(
         Volume::new("T:".to_owned(), 256).target(),

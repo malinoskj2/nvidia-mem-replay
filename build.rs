@@ -3,7 +3,9 @@
 
 const ICON: &str = "assets/nvidia-mem-replay.ico";
 /// Resource id the window class loads the icon by; must match `gui::ICON_RESOURCE`.
+#[cfg(windows)]
 const ICON_ID: &str = "1";
+#[cfg(windows)]
 const MANIFEST: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <dependency>
