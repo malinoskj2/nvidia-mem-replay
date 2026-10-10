@@ -1,6 +1,6 @@
 use crate::{
     config::{self, MAX_MEMORY_LIMIT_MB, MIN_MEMORY_LIMIT_MB, Volume},
-    sys::{helper::Helper, icon, nvidia, startup},
+    sys::{helper::Helper, icon, nvidia},
 };
 use anyhow::{Context as _, Result};
 use clap::{Parser, Subcommand};
@@ -11,6 +11,7 @@ use std::{
     thread,
     time::Duration,
 };
+use winsafe::{self as w, co, prelude::*};
 
 const TELEMETRY_REPORT_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_STOP_COMMAND_BYTES: u64 = 512;
@@ -56,7 +57,10 @@ fn mount_point(value: &str) -> Result<String, String> {
 }
 
 pub(super) fn dispatch() -> Result<Launch> {
-    let cli = Cli::try_parse()?;
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => return report_cli_error(error),
+    };
     match cli.command {
         Some(Mode::Filesystem {
             mount,
@@ -70,9 +74,23 @@ pub(super) fn dispatch() -> Result<Launch> {
                 .with_context(|| format!("write {}", path.display()))?;
             Ok(Launch::Handled)
         }
-        None => Ok(Launch::Window {
-            tray: cli.tray || std::env::args().any(|argument| argument == startup::TRAY_FLAG),
-        }),
+        None => Ok(Launch::Window { tray: cli.tray }),
+    }
+}
+
+/// The binary has no console, so clap's output only reaches the user through a message box.
+fn report_cli_error(error: clap::Error) -> Result<Launch> {
+    let icon = if error.use_stderr() {
+        co::MB::ICONERROR
+    } else {
+        co::MB::ICONINFORMATION
+    };
+    let _ = w::HWND::NULL.MessageBox(&error.to_string(), crate::APP_NAME, co::MB::OK | icon);
+
+    if error.use_stderr() {
+        Err(error.into())
+    } else {
+        Ok(Launch::Handled)
     }
 }
 
