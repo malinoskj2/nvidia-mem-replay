@@ -110,6 +110,7 @@ pub(crate) enum ApiError {
 unsafe extern "system" {
     fn LoadLibraryExW(file_name: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
     fn GetProcAddress(module: *mut c_void, name: *const u8) -> Option<unsafe extern "system" fn()>;
+    fn FreeLibrary(module: *mut c_void) -> i32;
 }
 
 #[link(name = "oleaut32")]
@@ -268,6 +269,12 @@ impl Api {
             });
         }
 
+        // A connection is kept for the life of the process, so the library stays loaded only
+        // once it has yielded an interface; a failed attempt releases it for the next retry.
+        Self::connect(module).inspect_err(|_| unload(module))
+    }
+
+    fn connect(module: *mut c_void) -> Result<Self, ApiError> {
         // SAFETY: `module` is a loaded library and the export name is NUL-terminated.
         let Some(export) = (unsafe { GetProcAddress(module, CREATE_INTERFACE.as_ptr()) }) else {
             return Err(ApiError::Export);
@@ -378,6 +385,12 @@ impl Api {
             })
         }
     }
+}
+
+/// Drop the reference `LoadLibraryExW` took on a library that yielded no interface.
+fn unload(module: *mut c_void) {
+    // SAFETY: `module` came from LoadLibraryExW and nothing obtained from it is kept.
+    unsafe { FreeLibrary(module) };
 }
 
 fn library_path() -> Result<PathBuf, ApiError> {
