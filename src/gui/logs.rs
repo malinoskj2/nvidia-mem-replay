@@ -6,7 +6,7 @@ use std::{cell::Cell, rc::Rc};
 use winsafe::{self as w, co, gui, prelude::*};
 
 /// Height of the log view, filling the page.
-const VIEW_HEIGHT: i32 = 284;
+const VIEW_HEIGHT: i32 = 290;
 /// Characters after which the view is cleared before the next batch of entries is appended;
 /// older lines remain in the session log file.
 const VIEW_LIMIT: i32 = 200_000;
