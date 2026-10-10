@@ -615,7 +615,10 @@ mod tests {
     use super::*;
     use crate::sys::helper::ShutdownReport;
     use cleanup::{finish_stop, stop_with};
-    use std::process::{Command as ProcessCommand, Stdio};
+    use std::{
+        cfg_select,
+        process::{Command as ProcessCommand, Stdio},
+    };
 
     fn control() -> (Control, Receiver<()>) {
         let (wake, receiver) = mpsc::sync_channel(1);
@@ -711,19 +714,12 @@ mod tests {
     /// A helper process that publishes nothing and exits on the stop command, so a `Session` can
     /// exist without a filesystem.
     fn idle_helper() -> Helper {
-        #[cfg(windows)]
-        let mut command = {
-            let mut command = ProcessCommand::new("cmd");
-            command.args(["/d", "/c", "set", "/p", "line="]);
-            command
+        let (program, args): (&str, &[&str]) = cfg_select! {
+            windows => { ("cmd", &["/d", "/c", "set", "/p", "line="]) }
+            _ => { ("sh", &["-c", "read command"]) }
         };
-        #[cfg(not(windows))]
-        let mut command = {
-            let mut command = ProcessCommand::new("sh");
-            command.args(["-c", "read command"]);
-            command
-        };
-        let child = command
+        let child = ProcessCommand::new(program)
+            .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -745,10 +741,12 @@ mod tests {
 
     /// The error `nvidia::plan` reports while the NVIDIA App is not running.
     fn unreachable_engine() -> anyhow::Error {
-        #[cfg(windows)]
-        let error = nvidia::NvidiaError::Unreachable(crate::sys::shadowplay::ApiError::Create(-1));
-        #[cfg(not(windows))]
-        let error = nvidia::NvidiaError::Unsupported;
+        let error = cfg_select! {
+            windows => {
+                nvidia::NvidiaError::Unreachable(crate::sys::shadowplay::ApiError::Create(-1))
+            }
+            _ => { nvidia::NvidiaError::Unsupported }
+        };
 
         anyhow::Error::from(error).context("discover NVIDIA temporary files location")
     }
