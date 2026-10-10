@@ -1,4 +1,4 @@
-#![cfg_attr(not(windows), allow(dead_code))]
+#![cfg_attr(not(windows), expect(dead_code))]
 
 mod config;
 mod filesystem;

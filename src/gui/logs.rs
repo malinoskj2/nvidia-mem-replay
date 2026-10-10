@@ -103,7 +103,7 @@ impl LogsPage {
 
     /// Scrolls to the newest line. A read-only edit without focus does not follow its caret
     /// by itself, and a hidden one ignores the request, so this runs once the tab is showing.
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code)]
     fn scroll_to_end(&self) {
         let length = self.view.hwnd().GetWindowTextLength().unwrap_or(0);
         self.view.set_selection(length, length);
