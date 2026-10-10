@@ -56,25 +56,12 @@ pub(crate) enum NvidiaError {
 impl RawValue {
     pub(crate) fn path(&self) -> Result<String, NvidiaError> {
         // NVIDIA versions use both REG_SZ and UTF-16 REG_BINARY.
-        if !matches!(self.kind, 1..=3)
-            || !self.bytes.len().is_multiple_of(2)
-            || self.bytes.len() > MAX_REGISTRY_VALUE_BYTES
-        {
+        if !matches!(self.kind, 1..=3) || self.bytes.len() > MAX_REGISTRY_VALUE_BYTES {
             return Err(NvidiaError::Format);
         }
 
-        let mut words: Vec<u16> = self
-            .bytes
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
-            .collect();
-        while words.last() == Some(&0) {
-            words.pop();
-        }
-
-        let path = String::from_utf16(&words).map_err(|_| NvidiaError::Format)?;
+        let mut path = String::from_utf16le(&self.bytes).map_err(|_| NvidiaError::Format)?;
+        path.truncate(path.trim_end_matches('\0').len());
         let drive_path = path.as_bytes().get(1..3) == Some(b":\\")
             && path.as_bytes().first().is_some_and(u8::is_ascii_alphabetic);
         let unc_path = path.starts_with(r"\\");
