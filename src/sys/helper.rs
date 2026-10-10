@@ -26,6 +26,8 @@ const FORCED_TERMINATION_TIMEOUT: Duration = Duration::from_secs(1);
 const SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const MEMEFS_EXECUTABLE: &str = "memefs-x64.exe";
 const STOP_COMMAND: &[u8] = b"stop\n";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Error)]
 pub(crate) enum HelperError {
@@ -129,7 +131,7 @@ impl Helper {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+            command.creation_flags(CREATE_NO_WINDOW);
         }
 
         Self::wait_ready(command, &volume, Some(redirect))
@@ -145,7 +147,7 @@ impl Helper {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .creation_flags(0x0800_0000);
+            .creation_flags(CREATE_NO_WINDOW);
 
         Self::wait_ready(command, volume, None)
     }
